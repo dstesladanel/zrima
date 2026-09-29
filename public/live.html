@@ -5,5 +5,5 @@ async function load() {
     app.innerHTML = brandHead(b.business) + '<h3>מצב הרצפה עכשיו</h3>' + boardHTML(b) + '<div class="muted" style="text-align:center">מתעדכן אוטומטית · ' + hm(b.updatedAt) + '</div><div class="card muted">' + contactLinks(b.business.contact) + '</div><p style="text-align:center"><a class="btn ghost" href="/b/' + slug + '">קביעת תור</a></p>' + FOOT;
   } catch { app.innerHTML = '<div class="card">העסק לא נמצא</div>'; }
 }
-load(); setInterval(load, 10000);
+load(); setInterval(() => { if (!document.hidden) load(); }, 15000); document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
 </script></body></html>

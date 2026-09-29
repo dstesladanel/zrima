@@ -161,3 +161,22 @@ test('actual duration recorded; duration suggestion after 3 sessions, never auto
   assert.equal(card.durationSuggestions[0].suggested, 75);
   assert.equal(c.durations[s.gel.id], undefined);
 });
+
+test('free mode: messages wait in the outbox, one tap marks them sent', () => {
+  const s = setup('09:00');
+  const a = s.book(s.gel, '10:00', 'א', P[0]);
+  const m = s.eng.d.messages.find((x) => x.apptId === a.id);
+  m.status = 'queued'; // the test transport reports ok; free mode leaves messages queued
+  const box = s.eng.outbox(s.biz);
+  assert.equal(box.length, 1);
+  assert.match(box[0].url, /^https:\/\/wa\.me\/972501111111\?text=/);
+  s.eng.markSent(s.biz, m.id);
+  assert.equal(s.eng.outbox(s.biz).length, 0);
+  assert.equal(m.status, 'sent');
+});
+test('owner key: right key logs in, wrong key does not', () => {
+  const s = setup('09:00');
+  assert.equal(s.eng.bizByKey('k'), s.biz);
+  assert.equal(s.eng.bizByKey('nope'), null);
+  assert.equal(s.eng.bizByKey(''), null);
+});

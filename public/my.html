@@ -30,5 +30,5 @@ async function openResched() {
     $('#sl').querySelectorAll('[data-s]').forEach((c) => c.onclick = async () => { try { await api('/api/t/' + token + '/reschedule', { method: 'POST', body: { start: +c.dataset.s } }); msg = '<div class="okmsg">התור הוזז ✓</div>'; } catch (e) { msg = '<div class="err">' + esc(e.message) + '</div>'; } resch = null; load(); });
   });
 }
-load(); setInterval(load, 8000);
+load(); setInterval(() => { if (!document.hidden) load(); }, 12000); document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
 </script></body></html>

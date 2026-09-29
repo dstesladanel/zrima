@@ -1,1 +1,19 @@
-{"name":"zrima","version":"0.1.0","description":"זרימה — מערכת ניהול תורים חיה לעסקי שירות קטנים","private":true,"scripts":{"start":"node server.js","seed":"node seed.js","test":"node --test test/*.test.js"},"engines":{"node":">=20"}}
+{
+  "name": "zrima",
+  "version": "0.1.0",
+  "description": "זרימה — מערכת ניהול תורים חיה לעסקי שירות קטנים",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node seed.js",
+    "test": "node --test test/*.test.js",
+    "cf:dev": "wrangler dev --local --port 8787",
+    "cf:deploy": "wrangler deploy"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

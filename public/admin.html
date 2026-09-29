@@ -43,13 +43,15 @@ let floorState = null;
 async function today() {
   const g = gen;
   const draw = async () => {
-    if ($('#modal').innerHTML || g !== gen) return;
-    let f, sg = [], pend = 0;
-    try { [f, sg, pend] = await Promise.all([A('/today?providerId=' + prov), A('/suggestions?providerId=' + prov), A('/messages').then((m) => m.filter((x) => x.status === 'needs_approval').length)]); } catch (e) { if (e.status === 401) return login(); return; }
+    if ($('#modal').innerHTML || g !== gen || document.hidden) return;
+    let f;
+    try { f = await A('/today?providerId=' + prov); } catch (e) { if (e.status === 401) return login(); return; }
     if (g !== gen) return;
-    floorState = f; renderToday(f, sg, pend);
+    floorState = f; renderToday(f, f.suggestions, f.pendingApproval, f.outboxCount);
   };
-  clearInterval(timer); timer = setInterval(draw, 4000); await draw();
+  clearInterval(timer); timer = setInterval(draw, 10000); // one request per 10s, paused while the tab is hidden
+  document.onvisibilitychange = () => { if (!document.hidden && tab === 'today') draw(); };
+  await draw();
 }
 function ring(cur, alertMin) {
   const total = (cur.duration + cur.extra) * 60000, elapsed = Date.now() - cur.actualStart;
@@ -59,8 +61,8 @@ function ring(cur, alertMin) {
   return `<div class="ring"><svg width="190" height="190"><circle cx="95" cy="95" r="${R}" fill="none" stroke="var(--s)" stroke-width="12"/><circle cx="95" cy="95" r="${R}" fill="none" stroke="${col}" stroke-width="12" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}"/></svg>
   <div class="mid"><div><div class="mins" style="color:${over ? 'var(--warn)' : 'inherit'}">${mins}</div><div class="muted">${over ? 'דקות מעבר ליעד' : 'דקות נשארו'}</div></div></div></div>`;
 }
-function renderToday(f, sg, pend) {
-  tabs({ messages: pend });
+function renderToday(f, sg, pend, outN) {
+  tabs({ messages: pend + outN });
   const cur = f.current, next = f.next, upcoming = f.appts.filter((a) => ['confirmed', 'arrived', 'pending'].includes(a.status));
   for (const h of f.hints) { const k = h.type + (f.current?.id || '') + h.text; if (['ending_soon', 'overdue'].includes(h.type) && !notified[k]) { notified[k] = 1; navigator.vibrate && navigator.vibrate([120, 60, 120]); } }
   let center;
@@ -69,7 +71,7 @@ function renderToday(f, sg, pend) {
   else if (next && next.status === 'arrived') center = `<div class="hero card"><div class="muted">ממתין/ה</div><h2>${esc(next.customerName)}</h2><div class="muted">${esc(next.serviceName)} · ${next.duration} דק'</div></div>`;
   else if (next) center = `<div class="hero card"><div class="muted">הבא בתור · ${hm(next.start)}</div><h2>${esc(next.customerName)}</h2><div class="muted">${esc(next.serviceName)} · ${next.duration} דק'</div></div>`;
   else center = `<div class="hero card"><h2>אין טיפול פתוח</h2><div class="muted">אין תורים נוספים להיום</div></div>`;
-  const hints = f.hints.map((h) => `<div class="hint"><span>${esc(h.text)}</span>${h.type === 'signal_not_coming' ? `<button class="btn danger" data-cancel="${h.apptId}">בטל תור</button>` : ''}</div>`).join('') + (pend ? `<div class="hint"><span>${pend} הודעות עיכוב ממתינות לאישור שלך</span><button class="btn soft" data-tab2="messages">לצפייה</button></div>` : '');
+  const hints = f.hints.map((h) => `<div class="hint"><span>${esc(h.text)}</span>${h.type === 'signal_not_coming' ? `<button class="btn danger" data-cancel="${h.apptId}">בטל תור</button>` : ''}</div>`).join('') + (pend ? `<div class="hint"><span>${pend} הודעות עיכוב ממתינות לאישור שלך</span><button class="btn soft" data-tab2="messages">לצפייה</button></div>` : '') + (outN ? `<div class="hint"><span>${outN} הודעות ממתינות לשליחה בוואטסאפ</span><button class="btn" data-outbox="1">שליחה</button></div>` : '');
   const rows = upcoming.map((a) => {
     const late = a.estStart && Math.round((a.estStart - a.start) / 60000) >= 5;
     return `<div class="qrow" data-row="${a.id}"><div class="t">${hm(a.start)}${late ? `<div class="muted" style="color:var(--warn)">→ ${hm(Math.ceil(a.estStart / 300000) * 300000)}</div>` : ''}</div><div style="flex:1"><b>${esc(a.customerName)}</b> ${a.status === 'arrived' ? '<span class="badge ok">הגיע</span>' : a.status === 'pending' ? '<span class="badge warn">ממתין לאישור</span>' : ''}<div class="muted">${esc(a.serviceName)} · ${a.duration} דק' · ${SRC[a.source] || ''}</div></div>${a.status === 'pending' ? `<div class="row"><button class="btn" data-ap="${a.id}">אשר</button><button class="btn danger" data-rj="${a.id}">דחה</button></div>` : ''}</div>`;
@@ -100,6 +102,7 @@ function bindMisc(f) {
   document.querySelectorAll('[data-cancel]').forEach((b) => (b.onclick = async () => { if (confirm('לבטל את התור?')) { await toast(() => A(`/appts/${b.dataset.cancel}/cancel`, { method: 'POST' })); today(); } }));
   document.querySelectorAll('[data-sga]').forEach((b) => (b.onclick = async () => { await toast(() => A('/suggestions/approve?providerId=' + prov, { method: 'POST', body: { id: b.dataset.sga } })); today(); }));
   document.querySelectorAll('[data-sgd]').forEach((b) => (b.onclick = async () => { await A('/suggestions/dismiss', { method: 'POST', body: { id: b.dataset.sgd } }); today(); }));
+  document.querySelectorAll('[data-outbox]').forEach((b) => (b.onclick = outbox));
   document.querySelectorAll('[data-walk]').forEach((b) => (b.onclick = walkin));
   document.querySelectorAll('[data-break]').forEach((b) => (b.onclick = async () => { await toast(() => A('/break', { method: 'POST', body: { providerId: prov, minutes: 15 } })); today(); }));
   view().querySelectorAll('[data-row]').forEach((r) => (r.onclick = () => rowSheet(f.appts.find((a) => a.id === r.dataset.row))));
@@ -135,6 +138,15 @@ async function walkin() {
     $('#cl').onclick = closeModal;
     $('#wgo').onclick = async () => { await toast(async () => { await A('/walkin', { method: 'POST', body: { providerId: prov, serviceId: b.dataset.s, name: $('#wn').value, phone: $('#wp').value } }); closeModal(); today(); }); };
   }));
+}
+
+// ---------- OUTBOX (free WhatsApp: one tap per message) ----------
+async function outbox() {
+  const list = await A('/outbox');
+  const rows = list.map((m) => `<div class="card" data-mid="${m.id}"><div class="row" style="justify-content:space-between"><b>${esc(m.customerName || '')}</b><span class="badge ${m.pipeline === 'marketing' ? 'warn' : ''}">${m.pipeline === 'marketing' ? 'שיווק' : MT[m.type] || m.type}</span></div><div class="muted" style="white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0">${esc(m.text)}</div>${m.url ? `<a class="btn block" style="text-align:center;text-decoration:none" target="_blank" rel="noopener" href="${esc(m.url)}" data-sent="${m.id}">שליחה בוואטסאפ</a>` : '<div class="muted">אין טלפון ללקוח</div>'}</div>`).join('');
+  modal(`<h2>הודעות לשליחה (${list.length})</h2><p class="muted">לחיצה פותחת וואטסאפ עם ההודעה מוכנה. לוחצים "שלח" ורק אז ההודעה יוצאת.</p>${rows || '<div class="muted">אין הודעות ממתינות</div>'}<button class="btn ghost block" id="cl">סגירה</button>`);
+  $('#cl').onclick = () => { closeModal(); go(tab); };
+  document.querySelectorAll('[data-sent]').forEach((a) => (a.onclick = () => { setTimeout(async () => { await A(`/messages/${a.dataset.sent}/sent`, { method: 'POST' }).catch(() => {}); a.closest('[data-mid]').style.opacity = '.4'; a.textContent = 'נשלח ✓'; }, 400); }));
 }
 
 // ---------- WEEK ----------
@@ -210,15 +222,17 @@ function svcSheet(s = { name: '', publicLabel: '', description: '', duration: 45
 
 // ---------- MESSAGES ----------
 const MT = { created: 'תור נוצר', pending: 'ממתין לאישור', approved: 'אושר', rejected: 'נדחה', reminder24: 'תזכורת 24ש׳', reminder2: 'תזכורת 2ש׳', prepare: 'להתכונן', delay_soft: 'עיכוב קל', delay_update: 'עדכון שעה', delay_clear: 'עיכוב', delay_big: 'עיכוב משמעותי', early: 'הקדמה אפשרית', cancelled: 'ביטול', moved: 'הזזה', gap_open: 'חור נפתח', move_offer: 'הצעת הקדמה', campaign: 'מבצע' };
-const MS = { queued: 'בתור', sent: 'נשלח', failed: 'נכשל', needs_approval: 'ממתין לאישור' };
+const MS = { queued: 'ממתין לשליחה', sent: 'נשלח', failed: 'נכשל', skipped: 'ללא טלפון', needs_approval: 'ממתין לאישור' };
 async function messages() {
   const [list] = await Promise.all([A('/messages')]);
   const pend = list.filter((m) => m.status === 'needs_approval');
-  view().innerHTML = `${pend.map((m) => `<div class="card" style="border-color:var(--warn)"><b>ממתין לאישור שלך · ${esc(m.customerName)}</b><textarea rows="4" data-mt="${m.id}" style="margin-top:8px">${esc(m.text)}</textarea><div class="row" style="margin-top:8px"><button class="btn grow" data-ma="${m.id}">אישור ושליחה</button></div></div>`).join('')}
+  const q = list.filter((m) => m.status === 'queued').length;
+  view().innerHTML = `${q ? `<div class="hint"><span>${q} הודעות ממתינות לשליחה בוואטסאפ</span><button class="btn" id="ob">שליחה</button></div>` : ''}${pend.map((m) => `<div class="card" style="border-color:var(--warn)"><b>ממתין לאישור שלך · ${esc(m.customerName)}</b><textarea rows="4" data-mt="${m.id}" style="margin-top:8px">${esc(m.text)}</textarea><div class="row" style="margin-top:8px"><button class="btn grow" data-ma="${m.id}">אישור ושליחה</button></div></div>`).join('')}
   <div class="card"><h2>משלוח מבצע / אירוע</h2><p class="muted">ערוץ נפרד מהודעות התפעול. נשלח רק למי שאישר שיווק, עם קישור הסרה בכל הודעה.</p>
   <label>למי</label><select id="sg"><option value="all">כולם</option><option value="service">לפי שירות אחרון</option><option value="inactive">לא היו X שבועות</option><option value="tag">לפי תגית</option></select><div id="sgx"></div>
   <label>הודעה</label><textarea id="ct" rows="3" placeholder="שישי ג׳ל ב־10% הנחה..."></textarea><div class="row" style="margin-top:8px"><button class="btn ghost" id="pv">תצוגה מקדימה</button><button class="btn" id="sd">שליחה</button></div><div id="pvr"></div></div>
   <div class="card"><h2>יומן שליחות</h2><table>${list.map((m) => `<tr><td>${new Date(m.at).toLocaleString('he-IL', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'numeric' })}</td><td>${esc(m.customerName || '')}</td><td><span class="badge ${m.pipeline === 'marketing' ? 'warn' : ''}">${m.pipeline === 'marketing' ? 'שיווק' : 'תפעול'}</span> ${MT[m.type] || m.type}</td><td>${MS[m.status] || m.status}</td></tr>`).join('')}</table></div>`;
+  const ob = $('#ob'); if (ob) ob.onclick = outbox;
   view().querySelectorAll('[data-ma]').forEach((b) => (b.onclick = async () => { await toast(() => A(`/messages/${b.dataset.ma}/approve`, { method: 'POST', body: { text: view().querySelector(`[data-mt="${b.dataset.ma}"]`).value } })); messages(); }));
   const seg = () => { const t = $('#sg').value; return t === 'service' ? { type: t, serviceId: $('#sx').value } : t === 'inactive' ? { type: t, weeks: +$('#sx').value } : t === 'tag' ? { type: t, tag: $('#sx').value } : { type: 'all' }; };
   $('#sg').onchange = () => { const t = $('#sg').value; $('#sgx').innerHTML = t === 'service' ? `<select id="sx">${biz.services.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>` : t === 'inactive' ? '<input id="sx" type="number" value="4" min="1">' : t === 'tag' ? '<input id="sx" placeholder="תגית">' : ''; };

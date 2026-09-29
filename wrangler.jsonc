@@ -1,0 +1,17 @@
+{
+  // Cloudflare Workers (free plan): static assets + one SQLite-backed Durable Object + a 1-minute cron.
+  "name": "zrima",
+  "main": "worker/index.js",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": ["/api/*", "/b/*", "/t/*", "/live/*", "/w/*", "/o/*", "/admin", "/admin/", "/healthz", "/"]
+  },
+  "durable_objects": { "bindings": [{ "name": "APP", "class_name": "App" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["App"] }],
+  "triggers": { "crons": ["* * * * *"] }
+}
