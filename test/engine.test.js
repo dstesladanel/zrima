@@ -217,3 +217,18 @@ test('platform admin can create a second business with setup; needs MASTER_KEY',
   assert.equal(s.eng.bizByKey('owner-key-123456').slug, 'daniela');
   assert.equal(s.eng.bizByKey('k').slug, 'demo', 'the first business is untouched');
 });
+
+test('platform admin: update an existing business and reset its owner key', async () => {
+  const { createApp } = require('../lib/routes');
+  const s = setup('09:00');
+  const app = createApp(s.eng, { MASTER_KEY: 'master-secret-1' });
+  const adm = (path, body, key = 'master-secret-1') => app({ method: 'POST', path, body, authKey: key });
+  assert.equal((await adm('/api/admin/businesses/demo/setup', {}, 'x')).status, 401);
+  const u = await adm('/api/admin/businesses/demo/setup', { tagline: 'חדש', services: [{ name: 'שירות', duration: 30, price: 10 }] });
+  assert.equal(u.status, 200); assert.equal(s.biz.tagline, 'חדש');
+  assert.equal((await adm('/api/admin/businesses/demo/owner-key', { ownerKey: 'short' })).status, 400);
+  assert.equal((await adm('/api/admin/businesses/demo/owner-key', { ownerKey: 'a-brand-new-key-1' })).status, 200);
+  assert.equal(s.eng.bizByKey('k'), null, 'old key no longer works');
+  assert.equal(s.eng.bizByKey('a-brand-new-key-1'), s.biz);
+  assert.equal((await adm('/api/admin/businesses/nope/setup', {})).status, 404);
+});
