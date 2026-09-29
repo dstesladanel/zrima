@@ -183,6 +183,7 @@ async function handler(req, res) {
   }
   const page = PAGES.find(([re]) => re.test(p));
   if (page) return serveFile(res, path.join(PUB, page[1]));
+  if (p === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   if (p === '/favicon.ico') { res.writeHead(204); return res.end(); }
   if (p === '/') { res.writeHead(302, { Location: '/admin' }); return res.end(); }
   const f = path.join(PUB, path.normalize(p).replace(/^(\.\.[/\\])+/, ''));
@@ -190,7 +191,21 @@ async function handler(req, res) {
   serveFile(res, f);
 }
 
+// First deploy: create the business from env vars if the database is empty.
+function bootstrap() {
+  const { BOOTSTRAP_SLUG: slug, BOOTSTRAP_NAME: name, OWNER_KEY: key } = process.env;
+  if (!slug || !key || db.d.businesses.length) return;
+  if (key.length < 12) { console.error('OWNER_KEY חייב להיות באורך 12 תווים לפחות'); return; }
+  const b = eng.createBusiness({ slug, name: name || slug, ownerKey: key });
+  if (process.env.BOOTSTRAP_DEMO === '1') {
+    eng.addService(b, { name: 'מילוי ג׳ל', duration: 75, buffer: 10, price: 180 });
+    eng.addService(b, { name: 'לק ג׳ל', duration: 45, buffer: 10, price: 120, walkin: true });
+  }
+  db.flush(); console.log(`נוצר עסק: /b/${slug}`);
+}
+
 if (require.main === module) {
+  bootstrap();
   http.createServer(handler).listen(PORT, () => console.log(`זרימה listening on ${BASE}`));
   setInterval(() => { try { eng.tick(); } catch (e) { console.error('tick', e); } }, 30000);
   process.on('SIGTERM', () => { db.flush(); process.exit(0); });

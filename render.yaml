@@ -1,0 +1,22 @@
+# Render Blueprint: New + → Blueprint → בחירת הריפו zrima.
+services:
+  - type: web
+    name: zrima
+    runtime: docker
+    plan: starter            # דיסק קבוע דורש תוכנית בתשלום
+    healthCheckPath: /healthz
+    disk:
+      name: zrima-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_FILE
+        value: /data/db.json
+      - key: BOOTSTRAP_SLUG   # הכתובת של העסק: /b/<slug>
+        sync: false
+      - key: BOOTSTRAP_NAME   # שם העסק
+        sync: false
+      - key: OWNER_KEY        # מפתח הכניסה לניהול (12+ תווים). שמרו אותו.
+        sync: false
+      - key: BASE_URL         # הכתובת שתקבלו מ־Render, לקישורים בהודעות
+        sync: false
