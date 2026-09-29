@@ -1,0 +1,163 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert');
+const { DB } = require('../lib/db');
+const { Engine, M } = require('../lib/engine');
+const T = require('../lib/time');
+
+// Fixed clock: Monday 2026-10-05 in Israel time.
+function setup(hhmm = '08:00') {
+  const clock = { t: T.atTime('2026-10-05', hhmm) };
+  const sent = [];
+  const eng = new Engine(new DB(null), { now: () => clock.t, transport: { send: async (to, text) => { sent.push({ to, text }); return { ok: true }; } } });
+  const biz = eng.createBusiness({ slug: 'demo', name: 'סטודיו', ownerKey: 'k' });
+  biz.hours[1] = [{ open: '09:00', close: '18:00' }];
+  const gel = eng.addService(biz, { name: 'מילוי ג׳ל', duration: 60, buffer: 10, price: 100 });
+  const quick = eng.addService(biz, { name: 'לק', duration: 30, buffer: 10, price: 50, walkin: true });
+  const prov = biz.providers[0].id;
+  const at = (h) => T.atTime('2026-10-05', h);
+  const book = (svc, h, name, phone) => eng.book(biz, { serviceId: svc.id, providerId: prov, start: at(h), name, phone });
+  return { clock, sent, eng, biz, gel, quick, prov, at, book };
+}
+const P = ['0501111111', '0502222222', '0503333333', '0504444444'];
+const times = (s, svc) => s.eng.slots(s.biz, { serviceId: svc.id, providerId: 'any', dateKey: '2026-10-05' }).map((x) => x.time);
+
+test('slot cannot cut the buffer of the previous appointment', () => {
+  const s = setup();
+  s.book(s.gel, '09:00', 'א', P[0]); // ends 10:00, buffer to 10:10
+  const t = times(s, s.gel);
+  assert.ok(!t.includes('10:00') && !t.includes('10:05'));
+  assert.ok(t.includes('10:15'));
+});
+test('new slot cannot run into the next appointment', () => {
+  const s = setup();
+  s.book(s.gel, '12:00', 'א', P[0]);
+  const t = times(s, s.gel);
+  assert.ok(!t.includes('11:00'), '11:00+60+10 would run into 12:00');
+  assert.ok(t.includes('10:45'));
+});
+test('lead time hides near slots', () => {
+  const s = setup('08:30');
+  const t = times(s, s.quick);
+  assert.ok(!t.includes('09:15') && t.includes('09:30'));
+});
+test('timer starts only on start, not on arrival', () => {
+  const s = setup('09:00');
+  const a = s.book(s.gel, '10:00', 'א', P[0]);
+  s.clock.t = s.at('10:00'); s.eng.arrive(s.biz, a.id);
+  assert.equal(a.actualStart, undefined);
+  s.clock.t = s.at('10:05'); s.eng.start(s.biz, a.id);
+  assert.equal(a.actualStart, s.at('10:05'));
+});
+test('extension pushes the next customer and always notifies', () => {
+  const s = setup('09:00');
+  const a = s.book(s.gel, '10:00', 'א', P[0]); s.book(s.gel, '11:15', 'ב', P[1]);
+  s.clock.t = s.at('10:00'); s.eng.start(s.biz, a.id);
+  const before = s.eng.d.messages.length;
+  s.clock.t = s.at('10:50'); s.eng.extend(s.biz, a.id, 15);
+  // a ends 11:15, buffer to 11:25; b planned 11:15 -> 11:25 (10 min)
+  const msgs = s.eng.d.messages.slice(before);
+  assert.equal(msgs.length, 1);
+  assert.equal(msgs[0].type, 'delay_clear');
+  assert.match(msgs[0].text, /11:25/);
+  assert.match(msgs[0].text, /סטודיו/);
+});
+test('small push is soft; >15 needs owner approval', () => {
+  const s = setup('09:00');
+  const a = s.book(s.gel, '10:00', 'א', P[0]); s.book(s.gel, '11:15', 'ב', P[1]);
+  s.clock.t = s.at('10:00'); s.eng.start(s.biz, a.id);
+  const n0 = s.eng.d.messages.length;
+  s.eng.extend(s.biz, a.id, 5); // absorbed by the 10-minute buffer: nobody is affected
+  assert.equal(s.eng.d.messages.length, n0);
+  s.eng.extend(s.biz, a.id, 5); // 5 minutes of real push
+  assert.equal(s.eng.d.messages[n0].type, 'delay_soft');
+  s.eng.extend(s.biz, a.id, 5); // 10 minutes late
+  assert.equal(s.eng.d.messages[s.eng.d.messages.length - 1].type, 'delay_clear');
+  s.eng.extend(s.biz, a.id, 10, true); // 20 minutes late
+  const m = s.eng.d.messages.slice(n0), last = m[m.length - 1];
+  assert.equal(last.type, 'delay_big'); assert.equal(last.status, 'needs_approval');
+});
+test('extension cap of 20 needs explicit override', () => {
+  const s = setup('09:00');
+  const a = s.book(s.gel, '10:00', 'א', P[0]);
+  s.clock.t = s.at('10:00'); s.eng.start(s.biz, a.id);
+  s.eng.extend(s.biz, a.id, 15);
+  assert.throws(() => s.eng.extend(s.biz, a.id, 10), /חריגה/);
+  s.eng.extend(s.biz, a.id, 10, true);
+  assert.equal(a.extra, 25);
+});
+test('live board is anonymous', () => {
+  const s = setup('09:00');
+  const a = s.book(s.gel, '10:00', 'שירה כהן', P[0]); s.book(s.gel, '11:15', 'דנה אברמוב', P[1]);
+  s.clock.t = s.at('10:00'); s.eng.start(s.biz, a.id);
+  const json = JSON.stringify(s.eng.liveBoard(s.biz));
+  for (const x of ['שירה', 'כהן', 'דנה', 'אברמוב', '0501111111', '972501111111', '0502222222']) assert.ok(!json.includes(x), x);
+  assert.match(json, /in_service/);
+});
+test('customer view exposes only their own appointment', () => {
+  const s = setup('09:00');
+  s.book(s.gel, '10:00', 'שירה', P[0]); const b = s.book(s.gel, '11:15', 'דנה', P[1]);
+  const v = JSON.stringify(s.eng.myView(s.biz, b));
+  assert.ok(!v.includes('שירה') && !v.includes(P[0]));
+});
+test('marketing needs consent and honours the frequency cap', () => {
+  const s = setup('09:00');
+  s.eng.upsertCustomer(s.biz, { name: 'א', phone: P[0], marketingConsent: true });
+  s.eng.upsertCustomer(s.biz, { name: 'ב', phone: P[1], marketingConsent: false });
+  let r = s.eng.sendCampaign(s.biz, { type: 'all' }, 'מבצע 10%');
+  assert.equal(r.sent, 1); assert.equal(r.skippedNoConsent, 1);
+  assert.match(s.eng.d.messages.find((x) => x.pipeline === 'marketing').text, /\/o\//);
+  r = s.eng.sendCampaign(s.biz, { type: 'all' }, 'עוד מבצע');
+  assert.equal(r.sent, 0); assert.equal(r.skippedFrequency, 1);
+  s.clock.t += 8 * 24 * 60 * M;
+  assert.equal(s.eng.sendCampaign(s.biz, { type: 'all' }, 'שוב').sent, 1);
+});
+test('opt-out stops marketing but not operational messages', () => {
+  const s = setup('09:00');
+  const c = s.eng.upsertCustomer(s.biz, { name: 'א', phone: P[0], marketingConsent: true });
+  s.eng.optOut(c.token);
+  assert.equal(s.eng.sendCampaign(s.biz, { type: 'all' }, 'x').sent, 0);
+  const a = s.book(s.gel, '10:00', 'א', P[0]);
+  assert.ok(s.eng.d.messages.some((m) => m.apptId === a.id && m.pipeline === 'ops'));
+});
+test('walk-in never overrides a confirmed appointment', () => {
+  const s = setup('08:30');
+  s.book(s.quick, '10:00', 'א', P[0]);
+  s.clock.t = s.at('09:50');
+  const r = s.eng.walkinCheck(s.biz, s.prov, s.quick.id);
+  assert.equal(r.when, 'in');
+  assert.ok(r.start >= s.at('10:40'), `walk-in starts ${T.fmtTime(r.start)}`);
+});
+test('gap detection + waitlist suggestion, no automatic moves', () => {
+  const s = setup('09:00');
+  const a = s.book(s.gel, '10:00', 'א', P[0]);
+  const b = s.book(s.gel, '12:00', 'ב', P[1]);
+  s.eng.addWaitlist(s.biz, { name: 'ג', phone: P[2], serviceId: s.quick.id });
+  s.clock.t = s.at('10:00'); s.eng.start(s.biz, a.id); s.clock.t = s.at('11:00'); s.eng.end(s.biz, a.id);
+  const sg = s.eng.suggestions(s.biz, s.prov);
+  assert.ok(sg.some((x) => x.type === 'waitlist'));
+  assert.equal(b.start, s.at('12:00'), 'no automatic move');
+  const before = s.eng.d.messages.length;
+  s.eng.approveSuggestion(s.biz, s.prov, sg.find((x) => x.type === 'waitlist').id);
+  assert.equal(s.eng.d.messages.length, before + 1);
+  assert.equal(s.eng.claimWait(s.eng.d.waitlist[0]).source, 'waitlist');
+});
+test('self-cancel is blocked inside the policy window unless delayed', () => {
+  const s = setup('09:00');
+  const a = s.book(s.gel, '10:00', 'א', P[0]);
+  assert.throws(() => s.eng.customerCancel(a), /ביטול עצמי/);
+  a.freeChange = true;
+  s.eng.customerCancel(a);
+  assert.equal(a.status, 'cancelled');
+});
+test('actual duration recorded; duration suggestion after 3 sessions, never auto-applied', () => {
+  const s = setup('09:00');
+  const c = s.eng.upsertCustomer(s.biz, { name: 'א', phone: P[0] });
+  for (let i = 0; i < 3; i++) {
+    const a = s.eng.createAppt(s.biz, { cust: c, svc: s.gel, providerId: s.prov, start: s.at('10:00') + i * 3 * 3600000, source: 'manual' });
+    s.clock.t = a.start; s.eng.start(s.biz, a.id); s.clock.t += 75 * M; s.eng.end(s.biz, a.id);
+  }
+  const card = s.eng.customerCard(s.biz, c.id);
+  assert.equal(card.durationSuggestions[0].suggested, 75);
+  assert.equal(c.durations[s.gel.id], undefined);
+});
