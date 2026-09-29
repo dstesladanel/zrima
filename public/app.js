@@ -17,6 +17,13 @@ function applyBrand(b) {
   if (!b) return;
   const st = document.documentElement.style;
   st.setProperty('--p', b.primary); st.setProperty('--s', b.secondary); st.setProperty('--bg', b.bg);
+  // Keep text readable on any brand colour: dark text on light colours, a deeper shade for links / outlines.
+  const rgb = [1, 3, 5].map((i) => parseInt(b.primary.slice(i, i + 2), 16));
+  const lin = rgb.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  const lum = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+  st.setProperty('--pt', lum > 0.3 ? '#1f1a24' : '#fff');
+  const k = lum > 0.2 ? 0.5 : 1;
+  st.setProperty('--pd', '#' + rgb.map((v) => Math.round(v * k).toString(16).padStart(2, '0')).join(''));
   st.setProperty('--font', `'${b.font}',system-ui,sans-serif`);
   if (!document.getElementById('gf')) {
     const l = document.createElement('link'); l.id = 'gf'; l.rel = 'stylesheet';

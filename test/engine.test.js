@@ -180,3 +180,40 @@ test('owner key: right key logs in, wrong key does not', () => {
   assert.equal(s.eng.bizByKey('nope'), null);
   assert.equal(s.eng.bizByKey(''), null);
 });
+
+test('setup import: services, hours, brand, fonts; bad input rejected', async () => {
+  const { createApp } = require('../lib/routes');
+  const s = setup('09:00');
+  const app = createApp(s.eng, {});
+  const call = (body) => app({ method: 'PUT', path: '/api/owner/import', body, authKey: 'k' });
+  const r = await call({
+    tagline: 'AMORE', contact: { phone: '0546922413', address: 'חריש' },
+    brand: { primary: '#cfa8af', font: 'Noto Sans Hebrew', logo: 'https://example.com/l.jpg', cover: 'javascript:alert(1)' },
+    hours: { 0: [{ open: '09:00', close: '14:00' }], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] },
+    services: [{ name: 'לק ג׳ל', duration: 60, buffer: 10, price: 150 }, { name: 'מילוי גל', duration: 30, price: 1, active: false }],
+  });
+  assert.equal(r.status, 200);
+  assert.equal(s.biz.brand.font, 'Noto Sans Hebrew');
+  assert.equal(s.biz.brand.logo, 'https://example.com/l.jpg');
+  assert.equal(s.biz.brand.cover, '', 'non-http image links are dropped');
+  assert.equal(s.biz.hours[0][0].close, '14:00');
+  assert.ok(s.biz.services.find((v) => v.name === 'לק ג׳ל' && v.price === 150));
+  assert.equal(s.biz.services.find((v) => v.name === 'מילוי גל').active, false);
+  // importing again updates instead of duplicating
+  const again = await call({ services: [{ name: 'לק ג׳ל', duration: 45, price: 160 }] });
+  assert.equal(again.json.services.updated, 1);
+  assert.equal(s.biz.services.filter((v) => v.name === 'לק ג׳ל').length, 1);
+  assert.equal((await call({ hours: { 0: [{ open: '18:00', close: '09:00' }] } })).status, 400);
+  assert.equal((await app({ method: 'PUT', path: '/api/owner/import', body: {}, authKey: 'wrong' })).status, 401);
+});
+test('platform admin can create a second business with setup; needs MASTER_KEY', async () => {
+  const { createApp } = require('../lib/routes');
+  const s = setup('09:00');
+  const app = createApp(s.eng, { MASTER_KEY: 'master-secret-1' });
+  const body = { slug: 'daniela', name: 'דניאלה', ownerKey: 'owner-key-123456', setup: { services: [{ name: 'לק', duration: 45, price: 100 }] } };
+  assert.equal((await app({ method: 'POST', path: '/api/admin/businesses', body, authKey: 'nope' })).status, 401);
+  const r = await app({ method: 'POST', path: '/api/admin/businesses', body, authKey: 'master-secret-1' });
+  assert.equal(r.status, 200); assert.equal(r.json.services.total, 1);
+  assert.equal(s.eng.bizByKey('owner-key-123456').slug, 'daniela');
+  assert.equal(s.eng.bizByKey('k').slug, 'demo', 'the first business is untouched');
+});

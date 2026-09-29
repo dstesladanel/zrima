@@ -1,0 +1,237 @@
+{
+  "slug": "daniela",
+  "name": "דניאלה ליבוביץ",
+  "tagline": "AMORE – love yourself",
+  "contact": {
+    "address": "טורקיז 3, חריש",
+    "phone": "0546922413",
+    "whatsapp": "972546922413",
+    "instagram": "daniela_leybovich",
+    "showPhonePublic": true
+  },
+  "brand": {
+    "primary": "#cfa8af",
+    "secondary": "#f6ecee",
+    "bg": "#f6f6f6",
+    "font": "Noto Sans Hebrew",
+    "tone": "neutral",
+    "logo": "https://calmarkstorage.blob.core.windows.net/images/1638948332137131417_0e222bc6-fc30-4792-92ad-aa3866abbe24_logo.jpeg",
+    "cover": "https://calmarkstorage.blob.core.windows.net/images/1639123908342590389_daec5464-c907-4c5e-bf08-e07fd7c22678_cover.jpeg"
+  },
+  "hours": {
+    "0": [
+      {
+        "open": "09:00",
+        "close": "14:00"
+      }
+    ],
+    "1": [
+      {
+        "open": "09:00",
+        "close": "14:30"
+      }
+    ],
+    "2": [
+      {
+        "open": "09:00",
+        "close": "14:30"
+      }
+    ],
+    "3": [
+      {
+        "open": "09:00",
+        "close": "19:00"
+      }
+    ],
+    "4": [
+      {
+        "open": "09:00",
+        "close": "14:30"
+      }
+    ],
+    "5": [],
+    "6": []
+  },
+  "services": [
+    {
+      "name": "לק ג׳ל",
+      "publicLabel": "ציפורניים",
+      "description": "",
+      "duration": 60,
+      "buffer": 10,
+      "price": 150,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "מילוי ארוך",
+      "publicLabel": "ציפורניים",
+      "description": "",
+      "duration": 120,
+      "buffer": 10,
+      "price": 160,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "בניית ציפורניים באקריל",
+      "publicLabel": "ציפורניים",
+      "description": "החל מ־₪250",
+      "duration": 120,
+      "buffer": 10,
+      "price": 250,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "מילוי באקריל",
+      "publicLabel": "ציפורניים",
+      "description": "החל מ־₪150",
+      "duration": 85,
+      "buffer": 10,
+      "price": 150,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "פרנץ׳ / אומברה מאקריל",
+      "publicLabel": "ציפורניים",
+      "description": "תוספת לטיפול",
+      "duration": 10,
+      "buffer": 5,
+      "price": 20,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "תיקון / השלמה",
+      "publicLabel": "ציפורניים",
+      "description": "",
+      "duration": 10,
+      "buffer": 5,
+      "price": 20,
+      "walkin": true,
+      "active": true
+    },
+    {
+      "name": "עיצוב גבות טבעיות",
+      "publicLabel": "גבות",
+      "description": "",
+      "duration": 30,
+      "buffer": 5,
+      "price": 50,
+      "walkin": true,
+      "active": true
+    },
+    {
+      "name": "עיצוב גבות ושפם",
+      "publicLabel": "גבות",
+      "description": "",
+      "duration": 90,
+      "buffer": 5,
+      "price": 100,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "איפור ערב",
+      "publicLabel": "איפור",
+      "description": "",
+      "duration": 90,
+      "buffer": 15,
+      "price": 350,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "איפור כלה",
+      "publicLabel": "איפור",
+      "description": "",
+      "duration": 120,
+      "buffer": 15,
+      "price": 1200,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "פדיקור",
+      "publicLabel": "פדיקור",
+      "description": "",
+      "duration": 60,
+      "buffer": 10,
+      "price": 200,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "לק ג׳ל רגליים",
+      "publicLabel": "פדיקור",
+      "description": "",
+      "duration": 60,
+      "buffer": 10,
+      "price": 100,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "הסרת שיער אזור קצר",
+      "publicLabel": "הסרת שיער",
+      "description": "אזור אחד",
+      "duration": 20,
+      "buffer": 5,
+      "price": 200,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "הסרת שיער בלייזר בינוני",
+      "publicLabel": "הסרת שיער",
+      "description": "בית שחי ומפשעות",
+      "duration": 25,
+      "buffer": 5,
+      "price": 300,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "הסרת שיער בלייזר",
+      "publicLabel": "הסרת שיער",
+      "description": "גוף מלא",
+      "duration": 25,
+      "buffer": 5,
+      "price": 600,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "טיפול פנים קלאסי",
+      "publicLabel": "טיפולי פנים",
+      "description": "",
+      "duration": 90,
+      "buffer": 10,
+      "price": 300,
+      "walkin": false,
+      "active": true
+    },
+    {
+      "name": "תוספות שיער",
+      "publicLabel": "שירותים נוספים",
+      "description": "",
+      "duration": 60,
+      "buffer": 10,
+      "price": 1,
+      "walkin": false,
+      "active": false
+    },
+    {
+      "name": "הזרקות",
+      "publicLabel": "שירותים נוספים",
+      "description": "החל מ־₪1,500",
+      "duration": 10,
+      "buffer": 10,
+      "price": 1500,
+      "walkin": false,
+      "active": true
+    }
+  ]
+}
