@@ -222,7 +222,7 @@ function svcSheet(s = { name: '', publicLabel: '', description: '', duration: 45
 
 // ---------- MESSAGES ----------
 const MT = { created: 'תור נוצר', pending: 'ממתין לאישור', approved: 'אושר', rejected: 'נדחה', reminder24: 'תזכורת 24ש׳', reminder2: 'תזכורת 2ש׳', prepare: 'להתכונן', delay_soft: 'עיכוב קל', delay_update: 'עדכון שעה', delay_clear: 'עיכוב', delay_big: 'עיכוב משמעותי', early: 'הקדמה אפשרית', cancelled: 'ביטול', moved: 'הזזה', gap_open: 'חור נפתח', move_offer: 'הצעת הקדמה', campaign: 'מבצע' };
-const MS = { queued: 'ממתין לשליחה', sent: 'נשלח', failed: 'נכשל', skipped: 'ללא טלפון', needs_approval: 'ממתין לאישור' };
+const MS = { queued: 'ממתין לשליחה', sending: 'בשליחה', sent: 'נשלח', failed: 'נכשל', skipped: 'ללא טלפון', needs_approval: 'ממתין לאישור' };
 async function messages() {
   const [list] = await Promise.all([A('/messages')]);
   const pend = list.filter((m) => m.status === 'needs_approval');
@@ -270,10 +270,28 @@ async function brand() {
 
 // ---------- POLICY ----------
 async function policy() {
-  biz = await A('/me'); const p = biz.policy;
+  biz = await A('/me'); const p = biz.policy, m = biz.messaging || {};
   const num = (id, label, v, hint = '') => `<div><label>${label}</label><input type="number" id="${id}" value="${v}">${hint ? `<div class="muted">${hint}</div>` : ''}</div>`;
   const sel = (id, label, opts, v) => `<div><label>${label}</label><select id="${id}">${opts.map((o) => `<option ${o == v ? 'selected' : ''}>${o}</option>`).join('')}</select></div>`;
-  view().innerHTML = `<div class="card"><h2>מדיניות</h2>${num('leadMin', 'Lead time לקביעה (דקות)', p.leadMin)}${num('windowDays', 'חלון הזמנה קדימה (ימים)', p.windowDays)}${num('cancelHours', 'ביטול / הזזה עצמית עד (שעות לפני)', p.cancelHours)}${sel('alertMin', 'התראת סיום (דקות לפני היעד)', [5, 8, 10], p.alertMin)}${sel('gapThreshold', 'סף חור לאריזה (דקות)', [20, 25, 30, 40], p.gapThreshold)}${num('softDelayMax', 'סף עיכוב קל (עד X דקות)', p.softDelayMax)}${num('marketingMaxDays', 'שיווק: לכל היותר אחת ל־X ימים', p.marketingMaxDays, 'ניתן לשנות, אי אפשר לבטל את ה־opt-out')}<label class="check"><input type="checkbox" id="auto" ${p.autoConfirm ? 'checked' : ''}> אישור אוטומטי של תורים אונליין</label><button class="btn block" id="sv" style="margin-top:14px">שמירה</button></div>`;
+  view().innerHTML = `<div class="card"><h2>שליחת הודעות ללקוחות</h2>
+  <p class="muted">המערכת מכינה הודעות לוואטסאפ כשמשהו משתנה: אישור תור, תזכורת, הארכה או איחור שדוחים לקוח, וביטול או הזזה של תור. אפשר לבחור איך הן יוצאות.</p>
+  <label class="check"><input type="radio" name="mm" value="manual" ${m.auto ? '' : 'checked'}> ידנית (חינם). כל הודעה מחכה ב"תור שליחה", לוחצים "שליחה בוואטסאפ" ושולחים מהמספר שלכם.</label>
+  <label class="check"><input type="radio" name="mm" value="auto" ${m.auto ? 'checked' : ''}> אוטומטית. ההודעות יוצאות לבד כשמשהו משתנה.</label>
+  <div id="autobox" style="display:${m.auto || m.hasCredentials ? 'block' : 'none'}"><div class="hint" style="display:block;margin-top:8px">שליחה אוטומטית דורשת חשבון WhatsApp Business API של Meta, ובדרך כלל יש עלות לכל שיחה. את הטוקן ואת מזהה המספר מקבלים ב־Meta for Developers.</div>
+  <label>מזהה מספר וואטסאפ (Phone number ID)</label><input id="wpid" inputmode="numeric" value="${esc(m.phoneId || '')}" style="direction:ltr">
+  <label>טוקן גישה (Access token)</label><input id="wtok" type="password" autocomplete="off" placeholder="${m.hasCredentials ? 'נשמר. השאירו ריק כדי לא לשנות' : ''}" style="direction:ltr">
+  ${m.hasCredentials ? '<div class="okmsg">פרטי החיבור נשמרו ✓ (הטוקן לא מוצג שוב)</div><button class="chip" id="wclr">מחיקת פרטי חיבור</button>' : ''}
+  <p class="muted">אם שליחה אוטומטית נכשלת, ההודעה חוזרת לתור השליחה הידנית, כך שאף הודעה לא הולכת לאיבוד.</p></div>
+  <button class="btn block" id="msv" style="margin-top:10px">שמירה</button><div id="mres"></div></div>
+  <div class="card"><h2>מדיניות</h2>${num('leadMin', 'Lead time לקביעה (דקות)', p.leadMin)}${num('windowDays', 'חלון הזמנה קדימה (ימים)', p.windowDays)}${num('cancelHours', 'ביטול / הזזה עצמית עד (שעות לפני)', p.cancelHours)}${sel('alertMin', 'התראת סיום (דקות לפני היעד)', [5, 8, 10], p.alertMin)}${sel('gapThreshold', 'סף חור לאריזה (דקות)', [20, 25, 30, 40], p.gapThreshold)}${num('softDelayMax', 'סף עיכוב קל (עד X דקות)', p.softDelayMax)}${num('marketingMaxDays', 'שיווק: לכל היותר אחת ל־X ימים', p.marketingMaxDays, 'ניתן לשנות, אי אפשר לבטל את ה־opt-out')}<label class="check"><input type="checkbox" id="auto" ${p.autoConfirm ? 'checked' : ''}> אישור אוטומטי של תורים אונליין</label><button class="btn block" id="sv" style="margin-top:14px">שמירה</button></div>`;
+  document.querySelectorAll('[name=mm]').forEach((r) => (r.onchange = () => { $('#autobox').style.display = document.querySelector('[name=mm]:checked').value === 'auto' || m.hasCredentials ? 'block' : 'none'; }));
+  $('#msv').onclick = async () => {
+    const auto = document.querySelector('[name=mm]:checked').value === 'auto', body = { auto };
+    if ($('#wpid').value.trim()) body.phoneId = $('#wpid').value.trim();
+    if ($('#wtok').value.trim()) body.token = $('#wtok').value.trim();
+    try { await A('/messaging', { method: 'PUT', body }); policy(); } catch (e) { $('#mres').innerHTML = alertBox(e.message); }
+  };
+  const c = $('#wclr'); if (c) c.onclick = async () => { if (confirm('למחוק את פרטי החיבור? השליחה תחזור למצב ידני.')) { await A('/messaging', { method: 'PUT', body: { clear: true } }); policy(); } };
   $('#sv').onclick = async () => { const g = (i) => +$('#' + i).value; await toast(() => A('/policy', { method: 'PUT', body: { leadMin: g('leadMin'), windowDays: g('windowDays'), cancelHours: g('cancelHours'), alertMin: g('alertMin'), gapThreshold: g('gapThreshold'), softDelayMax: g('softDelayMax'), marketingMaxDays: g('marketingMaxDays'), autoConfirm: $('#auto').checked } })); policy(); };
 }
 

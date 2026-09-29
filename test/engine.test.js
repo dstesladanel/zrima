@@ -239,3 +239,39 @@ test('owner keys must be ASCII (a Hebrew keyboard layout would make an unusable 
   assert.throws(() => s.eng.setOwnerKey(s.biz, 'short'), /12/);
   assert.throws(() => s.eng.setOwnerKey(s.biz, 'has space in it 123'), /אנגליות/);
 });
+
+test('messaging: manual by default; auto sends with the business credentials; failures fall back to the outbox; token never exposed', async () => {
+  const { createApp } = require('../lib/routes');
+  const calls = [];
+  const s = setup('09:00');
+  let ok = true;
+  s.eng.transport = { send: async (to, text, creds) => { calls.push({ to, creds }); return { ok }; } };
+  const app = createApp(s.eng, {});
+  const put = (body) => app({ method: 'PUT', path: '/api/owner/messaging', body, authKey: 'test-owner-key-1' });
+  // manual by default: nothing is sent, the message waits in the outbox
+  const a = s.book(s.gel, '10:00', 'א', P[0]);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(calls.length, 0);
+  assert.equal(s.eng.d.messages.find((m) => m.apptId === a.id).status, 'queued');
+  // auto needs credentials
+  assert.equal((await put({ auto: true })).status, 400);
+  assert.equal((await put({ auto: true, token: 'x'.repeat(30), phoneId: 'abc' })).status, 400);
+  const r = await put({ auto: true, token: 'EAAB' + 'x'.repeat(30), phoneId: '123456789012345' });
+  assert.equal(r.status, 200); assert.deepEqual(r.json, { auto: true, hasCredentials: true, phoneId: '123456789012345' });
+  const me = JSON.stringify((await app({ method: 'GET', path: '/api/owner/me', authKey: 'test-owner-key-1' })).json);
+  assert.ok(!me.includes('EAAB'), 'the token is never returned to the browser');
+  // auto: the next message is sent with this business's credentials
+  const b = s.book(s.gel, '12:00', 'ב', P[1]);
+  await new Promise((r2) => setTimeout(r2, 5));
+  assert.equal(calls.length, 1); assert.equal(calls[0].creds.phoneId, '123456789012345');
+  assert.equal(s.eng.d.messages.find((m) => m.apptId === b.id).status, 'sent');
+  // a failed send returns to the outbox instead of being lost
+  ok = false;
+  const c = s.book(s.gel, '14:00', 'ג', P[2]);
+  await new Promise((r2) => setTimeout(r2, 5));
+  const mc = s.eng.d.messages.find((m) => m.apptId === c.id);
+  assert.equal(mc.status, 'queued'); assert.equal(mc.autoFailed, true);
+  // clearing credentials switches back to manual
+  await put({ clear: true });
+  assert.equal(s.eng.msgCfg(s.biz).auto, false);
+});
