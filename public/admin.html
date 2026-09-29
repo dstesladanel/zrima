@@ -18,7 +18,7 @@ function login(err) {
   root.innerHTML = `<div class="wrap"><div class="card" style="margin-top:12vh"><h1>זרימה</h1><p class="muted">כניסה לניהול העסק</p>${err ? alertBox(err) : ''}
   <label>מפתח בעלים</label><input id="k" type="password" autocomplete="current-password"><button class="btn block" id="go" style="margin-top:14px">כניסה</button></div></div>`;
   $('#go').onclick = async () => { KEY = $('#k').value.trim(); try { biz = await A('/me'); try { localStorage.setItem('zk', KEY); } catch {} start(); } catch { login('מפתח לא נכון'); } };
-  $('#k').onkeydown = (e) => e.key === 'Enter' && $('#go').click();
+  $('#k').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#go').click(); });
 }
 async function boot() { if (!KEY) return login(); try { biz = await A('/me'); start(); } catch { login(); } }
 function start() {
