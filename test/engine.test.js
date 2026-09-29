@@ -10,7 +10,7 @@ function setup(hhmm = '08:00') {
   const clock = { t: T.atTime('2026-10-05', hhmm) };
   const sent = [];
   const eng = new Engine(new DB(null), { now: () => clock.t, transport: { send: async (to, text) => { sent.push({ to, text }); return { ok: true }; } } });
-  const biz = eng.createBusiness({ slug: 'demo', name: 'סטודיו', ownerKey: 'k' });
+  const biz = eng.createBusiness({ slug: 'demo', name: 'סטודיו', ownerKey: 'test-owner-key-1' });
   biz.hours[1] = [{ open: '09:00', close: '18:00' }];
   const gel = eng.addService(biz, { name: 'מילוי ג׳ל', duration: 60, buffer: 10, price: 100 });
   const quick = eng.addService(biz, { name: 'לק', duration: 30, buffer: 10, price: 50, walkin: true });
@@ -176,7 +176,7 @@ test('free mode: messages wait in the outbox, one tap marks them sent', () => {
 });
 test('owner key: right key logs in, wrong key does not', () => {
   const s = setup('09:00');
-  assert.equal(s.eng.bizByKey('k'), s.biz);
+  assert.equal(s.eng.bizByKey('test-owner-key-1'), s.biz);
   assert.equal(s.eng.bizByKey('nope'), null);
   assert.equal(s.eng.bizByKey(''), null);
 });
@@ -185,7 +185,7 @@ test('setup import: services, hours, brand, fonts; bad input rejected', async ()
   const { createApp } = require('../lib/routes');
   const s = setup('09:00');
   const app = createApp(s.eng, {});
-  const call = (body) => app({ method: 'PUT', path: '/api/owner/import', body, authKey: 'k' });
+  const call = (body) => app({ method: 'PUT', path: '/api/owner/import', body, authKey: 'test-owner-key-1' });
   const r = await call({
     tagline: 'AMORE', contact: { phone: '0546922413', address: 'חריש' },
     brand: { primary: '#cfa8af', font: 'Noto Sans Hebrew', logo: 'https://example.com/l.jpg', cover: 'javascript:alert(1)' },
@@ -215,7 +215,7 @@ test('platform admin can create a second business with setup; needs MASTER_KEY',
   const r = await app({ method: 'POST', path: '/api/admin/businesses', body, authKey: 'master-secret-1' });
   assert.equal(r.status, 200); assert.equal(r.json.services.total, 1);
   assert.equal(s.eng.bizByKey('owner-key-123456').slug, 'daniela');
-  assert.equal(s.eng.bizByKey('k').slug, 'demo', 'the first business is untouched');
+  assert.equal(s.eng.bizByKey('test-owner-key-1').slug, 'demo', 'the first business is untouched');
 });
 
 test('platform admin: update an existing business and reset its owner key', async () => {
@@ -228,7 +228,14 @@ test('platform admin: update an existing business and reset its owner key', asyn
   assert.equal(u.status, 200); assert.equal(s.biz.tagline, 'חדש');
   assert.equal((await adm('/api/admin/businesses/demo/owner-key', { ownerKey: 'short' })).status, 400);
   assert.equal((await adm('/api/admin/businesses/demo/owner-key', { ownerKey: 'a-brand-new-key-1' })).status, 200);
-  assert.equal(s.eng.bizByKey('k'), null, 'old key no longer works');
+  assert.equal(s.eng.bizByKey('test-owner-key-1'), null, 'old key no longer works');
   assert.equal(s.eng.bizByKey('a-brand-new-key-1'), s.biz);
   assert.equal((await adm('/api/admin/businesses/nope/setup', {})).status, 404);
+});
+
+test('owner keys must be ASCII (a Hebrew keyboard layout would make an unusable key)', () => {
+  const s = setup('09:00');
+  assert.throws(() => s.eng.createBusiness({ slug: 'x1', name: 'x', ownerKey: 'סיסמה-בעברית-123' }), /אנגליות/);
+  assert.throws(() => s.eng.setOwnerKey(s.biz, 'short'), /12/);
+  assert.throws(() => s.eng.setOwnerKey(s.biz, 'has space in it 123'), /אנגליות/);
 });

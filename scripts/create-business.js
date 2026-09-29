@@ -23,6 +23,7 @@ function ask(q, hidden) {
   const setup = JSON.parse(fs.readFileSync(file, 'utf8'));
   const { slug, ...rest } = setup;
   const master = process.env.MASTER_KEY || (await ask('מפתח ניהול-על (MASTER_KEY): ', true));
+  if (!/^[\x21-\x7e]+$/.test(master)) { console.error('המפתח מכיל אותיות בעברית או רווחים. החליפו את שפת המקלדת לאנגלית והקלידו שוב (אותיות אנגליות, מספרים וסימנים בלבד).'); process.exit(1); }
   const ownerKey = process.env.OWNER_KEY || crypto.randomBytes(12).toString('base64url'); // 16 chars
   const base = site.replace(/\/$/, '');
   const call = async (path, body) => {
