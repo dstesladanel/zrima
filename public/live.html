@@ -1,0 +1,9 @@
+<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><title>סטטוס חי</title></head><body><div id="app" class="wrap"></div><script src="/app.js"></script><script>
+const slug = lastSeg(); const app = $('#app');
+async function load() {
+  try { const b = await api('/api/public/' + slug + '/live'); applyBrand(b.business.brand); document.title = b.business.name;
+    app.innerHTML = brandHead(b.business) + '<h3>מצב הרצפה עכשיו</h3>' + boardHTML(b) + '<div class="muted" style="text-align:center">מתעדכן אוטומטית · ' + hm(b.updatedAt) + '</div><div class="card muted">' + contactLinks(b.business.contact) + '</div><p style="text-align:center"><a class="btn ghost" href="/b/' + slug + '">קביעת תור</a></p>' + FOOT;
+  } catch { app.innerHTML = '<div class="card">העסק לא נמצא</div>'; }
+}
+load(); setInterval(load, 10000);
+</script></body></html>

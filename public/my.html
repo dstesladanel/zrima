@@ -1,0 +1,34 @@
+<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><title>התור שלי</title></head><body><div id="app" class="wrap"></div><script src="/app.js"></script><script>
+const token = lastSeg(); const app = $('#app'); let msg = '', resch = null;
+const ST = { pending: ['ממתין לאישור', 'warn'], confirmed: ['מאושר', 'ok'], arrived: ['הגעת — ממתין/ה', 'ok'], in_service: ['בטיפול', 'ok'], done: ['הסתיים', ''], cancelled: ['בוטל', 'bad'], no_show: ['לא הגעת', 'bad'] };
+async function load() {
+  if (resch && resch.open) return;
+  let d; try { d = await api('/api/t/' + token); } catch { app.innerHTML = '<div class="card">התור לא נמצא</div>'; return; }
+  const m = d.mine, b = d.board; applyBrand(b.business.brand); document.title = b.business.name;
+  const live = ['pending', 'confirmed', 'arrived', 'in_service'].includes(m.status);
+  app.innerHTML = brandHead(b.business) + '<div class="card"><span class="badge ' + (ST[m.status]?.[1] || '') + '">' + (ST[m.status]?.[0] || m.status) + '</span><h2 style="margin-top:8px">' + esc(m.service) + '</h2><div>' + esc(m.when) + '</div>'
+    + (m.estTime && live ? '<div class="big" style="margin-top:8px">' + (m.delayed ? 'כניסה משוערת ' : 'כניסה ') + m.estTime + '</div>' + (m.delayed ? '<div class="muted">השעה עודכנה בגלל עיכוב קל בעסק</div>' : '') + '<div class="muted" style="margin-top:4px">' + esc(m.positionText || '') + '</div>' : '') + '</div>'
+    + (m.moveOffer ? '<div class="card"><h3>אפשר להקדים?</h3><p>התפנה זמן — אפשר להקדים את התור ל־' + m.moveOffer.time + '.</p><div class="row"><button class="btn grow" id="acc">כן, מתאים</button><button class="btn ghost grow" id="dec">לא, תודה</button></div></div>' : '')
+    + (live ? '<h3>מצב הרצפה עכשיו</h3>' + boardHTML(b) : '')
+    + (live && m.status !== 'in_service' ? '<div class="card"><div class="row"><button class="chip" data-sig="omw">אני בדרך</button><button class="chip" data-sig="late">מאחר/ת</button><button class="chip" data-sig="not_coming">לא מגיע/ה</button>' + (m.attendanceConfirmed ? '' : '<button class="chip on" data-sig="confirmed">אישור הגעה</button>') + '</div>' + (m.signal ? '<div class="muted" style="margin-top:8px">העסק עודכן ✓</div>' : '') + '</div>' : '')
+    + (m.canSelfChange ? '<div class="card"><div class="row"><button class="btn ghost grow" id="rs">הזזת תור</button><button class="btn danger grow" id="cn">ביטול</button></div><div id="rsbox"></div></div>' : (live ? '<div class="card muted">לשינוי או ביטול (פחות מ־' + m.cancelHours + ' שעות לתור) יש לפנות לעסק:<br>' + contactLinks(b.business.contact) + '</div>' : '')) + msg
+    + '<div class="card muted">' + contactLinks(b.business.contact) + (b.business.contact.address ? '<br>' + esc(b.business.contact.address) : '') + '<br><a href="/live/' + d.slug + '">לוח חי של העסק</a> · <a href="/b/' + d.slug + '">קביעת תור נוסף</a></div>' + FOOT;
+  app.querySelectorAll('[data-sig]').forEach((x) => x.onclick = async () => { try { await api('/api/t/' + token + '/signal', { method: 'POST', body: { signal: x.dataset.sig } }); msg = '<div class="okmsg">העדכון נשלח לעסק</div>'; } catch (e) { msg = '<div class="err">' + esc(e.message) + '</div>'; } load(); });
+  const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+  on('#acc', async () => { try { await api('/api/t/' + token + '/offer/accept', { method: 'POST' }); msg = '<div class="okmsg">התור הוקדם ✓</div>'; } catch (e) { msg = '<div class="err">' + esc(e.message) + '</div>'; } load(); });
+  on('#dec', async () => { await api('/api/t/' + token + '/offer/decline', { method: 'POST' }); load(); });
+  on('#cn', async () => { if (!confirm('לבטל את התור?')) return; try { await api('/api/t/' + token + '/cancel', { method: 'POST' }); msg = ''; } catch (e) { msg = '<div class="err">' + esc(e.message) + '</div>'; } load(); });
+  on('#rs', openResched);
+}
+async function openResched() {
+  resch = { open: true }; const box = $('#rsbox'); const days = await api('/api/t/' + token + '/days');
+  box.innerHTML = '<div class="chips" style="margin-top:12px">' + days.map((d) => '<button class="chip" data-d="' + d.date + '">' + esc(dayName(d.date)) + '</button>').join('') + '</div><div id="sl" class="chips" style="margin-top:10px"></div><button class="btn ghost" id="x" style="margin-top:10px">סגירה</button>';
+  $('#x').onclick = () => { resch = null; load(); };
+  box.querySelectorAll('[data-d]').forEach((b) => b.onclick = async () => {
+    const s = await api('/api/t/' + token + '/slots?date=' + b.dataset.d);
+    $('#sl').innerHTML = s.map((x) => '<button class="chip" data-s="' + x.start + '">' + x.time + '</button>').join('') || '<span class="muted">אין שעות</span>';
+    $('#sl').querySelectorAll('[data-s]').forEach((c) => c.onclick = async () => { try { await api('/api/t/' + token + '/reschedule', { method: 'POST', body: { start: +c.dataset.s } }); msg = '<div class="okmsg">התור הוזז ✓</div>'; } catch (e) { msg = '<div class="err">' + esc(e.message) + '</div>'; } resch = null; load(); });
+  });
+}
+load(); setInterval(load, 8000);
+</script></body></html>

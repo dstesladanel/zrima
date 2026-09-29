@@ -1,0 +1,46 @@
+<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><title>קביעת תור</title></head><body><div id="app" class="wrap"></div><script src="/app.js"></script><script>
+const slug = lastSeg(); let biz, st = { svc: null, prov: 'any', date: null, start: null, days: [], slots: [] };
+const app = $('#app');
+async function init() {
+  try { biz = await api('/api/public/' + slug); } catch (e) { app.innerHTML = '<div class="card">העסק לא נמצא</div>'; return; }
+  applyBrand(biz.brand); document.title = biz.name; render();
+}
+function render() {
+  const s = biz.services;
+  app.innerHTML = brandHead(biz) + '<div class="card"><h2>1. בחרו שירות</h2>' + s.map((x) => '<button class="svc ' + (st.svc === x.id ? 'on' : '') + '" data-svc="' + x.id + '"><span><b>' + esc(x.name) + '</b><div class="muted">' + esc(x.description) + ' · ' + x.duration + " דק'</div></span><b>" + money(x.price) + '</b></button>').join('') + '</div>'
+    + (st.svc ? stepTwo() : '') + '<div id="msg"></div>' + '<div class="card muted">' + contactLinks(biz.contact) + (biz.contact.address ? '<br>' + esc(biz.contact.address) : '') + '<br><a href="/live/' + slug + '">לוח סטטוס חי</a></div>' + FOOT;
+  app.querySelectorAll('[data-svc]').forEach((b) => b.onclick = () => { st.svc = b.dataset.svc; st.date = st.start = null; loadDays(); });
+  app.querySelectorAll('[data-prov]').forEach((b) => b.onclick = () => { st.prov = b.dataset.prov; st.date = st.start = null; loadDays(); });
+  app.querySelectorAll('[data-date]').forEach((b) => b.onclick = () => { st.date = b.dataset.date; st.start = null; loadSlots(); });
+  app.querySelectorAll('[data-start]').forEach((b) => b.onclick = () => { st.start = +b.dataset.start; st.prv = b.dataset.p; render(); document.getElementById('form')?.scrollIntoView({ behavior: 'smooth' }); });
+  const f = $('#f'); if (f) f.onsubmit = submit;
+  const w = $('#wl'); if (w) w.onclick = waitlist;
+}
+function stepTwo() {
+  let h = '<div class="card">';
+  if (biz.providers.length > 1) h += '<h3>אצל מי?</h3><div class="chips" style="margin-bottom:12px"><button class="chip ' + (st.prov === 'any' ? 'on' : '') + '" data-prov="any">אין העדפה</button>' + biz.providers.map((p) => '<button class="chip ' + (st.prov === p.id ? 'on' : '') + '" data-prov="' + p.id + '">' + esc(p.name) + '</button>').join('') + '</div>';
+  h += '<h2>2. בחרו יום ושעה</h2>';
+  if (!st.days.length) h += '<p class="muted">אין כרגע זמנים פנויים.</p><button id="wl" class="btn ghost">הצטרפות לרשימת המתנה</button>';
+  else h += '<div class="chips">' + st.days.map((d) => '<button class="chip ' + (st.date === d.date ? 'on' : '') + '" data-date="' + d.date + '">' + esc(dayName(d.date)) + '</button>').join('') + '</div>';
+  if (st.date) h += '<div class="chips" style="margin-top:12px">' + st.slots.map((x) => '<button class="chip ' + (st.start === x.start ? 'on' : '') + '" data-start="' + x.start + '" data-p="' + x.providerId + '">' + x.time + '</button>').join('') + '</div>';
+  h += '</div>';
+  if (st.start) h += '<form id="f" class="card"><h2 id="form">3. הפרטים שלכם</h2><label>שם</label><input name="name" required maxlength="60" autocomplete="name"><label>טלפון (וואטסאפ)</label><input name="phone" required inputmode="tel" autocomplete="tel" placeholder="050-0000000"><label class="check"><input type="checkbox" name="mk"> אשמח לקבל מבצעים ועדכונים מהעסק (אפשר להסיר בכל עת)</label><button class="btn block" style="margin-top:14px">אישור התור</button></form>';
+  return h;
+}
+async function q() { return 'serviceId=' + st.svc + '&providerId=' + st.prov; }
+async function loadDays() { st.days = await api('/api/public/' + slug + '/days?' + await q()); render(); }
+async function loadSlots() { st.slots = await api('/api/public/' + slug + '/slots?' + await q() + '&date=' + st.date); render(); }
+async function submit(e) {
+  e.preventDefault(); const fd = new FormData(e.target), btn = e.target.querySelector('button'); btn.disabled = true;
+  try {
+    const r = await api('/api/public/' + slug + '/book', { method: 'POST', body: { serviceId: st.svc, providerId: st.prv, start: st.start, name: fd.get('name'), phone: fd.get('phone'), marketingConsent: fd.get('mk') === 'on' } });
+    location.href = '/t/' + r.token;
+  } catch (er) { $('#msg').innerHTML = '<div class="err">' + esc(er.message) + '</div>'; btn.disabled = false; if (er.status === 409) { st.start = null; loadSlots(); } }
+}
+async function waitlist() {
+  const name = prompt('שם'), phone = name && prompt('טלפון');
+  if (!phone) return;
+  try { await api('/api/public/' + slug + '/waitlist', { method: 'POST', body: { name, phone, serviceId: st.svc } }); $('#msg').innerHTML = '<div class="okmsg">נרשמתם לרשימת ההמתנה. נעדכן ברגע שיתפנה מקום.</div>'; } catch (er) { $('#msg').innerHTML = '<div class="err">' + esc(er.message) + '</div>'; }
+}
+init();
+</script></body></html>

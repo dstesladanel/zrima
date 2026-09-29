@@ -1,0 +1,10 @@
+<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><title>התפנה מקום</title></head><body><div id="app" class="wrap"></div><script src="/app.js"></script><script>
+const token = lastSeg(); const app = $('#app');
+(async () => {
+  let d; try { d = await api('/api/w/' + token); } catch { app.innerHTML = '<div class="card">לא נמצא</div>'; return; }
+  applyBrand(d.business.brand); document.title = d.business.name;
+  const offer = d.status === 'offered';
+  app.innerHTML = brandHead(d.business) + '<div class="card">' + (offer ? '<h2>התפנה מקום היום ב־' + d.offerTime + '</h2><p>' + esc(d.service) + '</p><button class="btn block" id="c">תפסו לי את המקום</button>' : d.status === 'booked' ? '<h2>המקום נתפס ✓</h2>' : '<h2>ההצעה כבר לא בתוקף</h2><p class="muted">נעדכן כשיתפנה מקום נוסף.</p>') + '<div id="m"></div></div>' + FOOT;
+  const c = $('#c'); if (c) c.onclick = async () => { c.disabled = true; try { const r = await api('/api/w/' + token + '/claim', { method: 'POST' }); location.href = '/t/' + r.token; } catch (e) { $('#m').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; } };
+})();
+</script></body></html>

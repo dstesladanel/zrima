@@ -183,6 +183,7 @@ async function handler(req, res) {
   }
   const page = PAGES.find(([re]) => re.test(p));
   if (page) return serveFile(res, path.join(PUB, page[1]));
+  if (p === '/favicon.ico') { res.writeHead(204); return res.end(); }
   if (p === '/') { res.writeHead(302, { Location: '/admin' }); return res.end(); }
   const f = path.join(PUB, path.normalize(p).replace(/^(\.\.[/\\])+/, ''));
   if (!f.startsWith(PUB)) { res.writeHead(403); return res.end(); }

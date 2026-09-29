@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="stylesheet" href="/style.css"><title>זרימה · ניהול</title></head>
+<body><div id="root"></div><div id="modal"></div>
+<script src="/app.js"></script>
+<script>
+let KEY = ''; try { KEY = localStorage.getItem('zk') || ''; } catch {}
+let biz = null, tab = 'today', prov = null, timer = null, notified = {}, gen = 0;
+const root = $('#root');
+const A = (p, o = {}) => api('/api/owner' + p, { ...o, key: KEY });
+const TABS = [['today', 'היום'], ['week', 'שבוע'], ['customers', 'לקוחות'], ['services', 'שירותים ושעות'], ['messages', 'הודעות'], ['waitlist', 'המתנה'], ['brand', 'מותג'], ['policy', 'מדיניות'], ['metrics', 'מדדים']];
+const SRC = { online: 'אונליין', manual: 'ידני', walkin: 'Walk-in', waitlist: 'המתנה' };
+const alertBox = (m) => `<div class="err">${esc(m)}</div>`;
+async function toast(fn) { try { return await fn(); } catch (e) { alert(e.message); } }
+
+// ---------- login ----------
+function login(err) {
+  root.innerHTML = `<div class="wrap"><div class="card" style="margin-top:12vh"><h1>זרימה</h1><p class="muted">כניסה לניהול העסק</p>${err ? alertBox(err) : ''}
+  <label>מפתח בעלים</label><input id="k" type="password" autocomplete="current-password"><button class="btn block" id="go" style="margin-top:14px">כניסה</button></div></div>`;
+  $('#go').onclick = async () => { KEY = $('#k').value.trim(); try { biz = await A('/me'); try { localStorage.setItem('zk', KEY); } catch {} start(); } catch { login('מפתח לא נכון'); } };
+  $('#k').onkeydown = (e) => e.key === 'Enter' && $('#go').click();
+}
+async function boot() { if (!KEY) return login(); try { biz = await A('/me'); start(); } catch { login(); } }
+function start() {
+  applyBrand(biz.brand); prov = prov || biz.providers.find((p) => p.active)?.id;
+  root.innerHTML = `<div class="app"><div class="tabs" id="tabs"></div><div id="view"></div></div><div id="barhost"></div>`;
+  go(tab);
+}
+function tabs(badges = {}) {
+  $('#tabs').innerHTML = TABS.map(([k, n]) => `<button class="tab ${tab === k ? 'on' : ''}" data-tab="${k}">${n}${badges[k] ? `<span class="n">${badges[k]}</span>` : ''}</button>`).join('') + `<button class="tab" id="out">יציאה</button>`;
+  $('#tabs').querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => go(b.dataset.tab)));
+  $('#out').onclick = () => { try { localStorage.removeItem('zk'); } catch {} KEY = ''; login(); };
+}
+function go(t) { tab = t; gen++; clearInterval(timer); $('#barhost').innerHTML = ''; tabs(); ({ today, week, customers, services, messages, waitlist, brand, policy, metrics })[t](); }
+const view = () => $('#view');
+const provPicker = () => biz.providers.filter((p) => p.active).length > 1 ? `<div class="chips" style="margin-bottom:10px">${biz.providers.filter((p) => p.active).map((p) => `<button class="chip ${prov === p.id ? 'on' : ''}" data-prov="${p.id}">${esc(p.name)}</button>`).join('')}</div>` : '';
+function bindProv(fn) { view().querySelectorAll('[data-prov]').forEach((b) => (b.onclick = () => { prov = b.dataset.prov; fn(); })); }
+function modal(html) { const m = $('#modal'); m.innerHTML = `<div class="modal" id="mm"><div class="sheet">${html}</div></div>`; $('#mm').onclick = (e) => e.target.id === 'mm' && closeModal(); return m; }
+function closeModal() { $('#modal').innerHTML = ''; }
+
+// ---------- TODAY (the live floor) ----------
+let floorState = null;
+async function today() {
+  const g = gen;
+  const draw = async () => {
+    if ($('#modal').innerHTML || g !== gen) return;
+    let f, sg = [], pend = 0;
+    try { [f, sg, pend] = await Promise.all([A('/today?providerId=' + prov), A('/suggestions?providerId=' + prov), A('/messages').then((m) => m.filter((x) => x.status === 'needs_approval').length)]); } catch (e) { if (e.status === 401) return login(); return; }
+    if (g !== gen) return;
+    floorState = f; renderToday(f, sg, pend);
+  };
+  clearInterval(timer); timer = setInterval(draw, 4000); await draw();
+}
+function ring(cur, alertMin) {
+  const total = (cur.duration + cur.extra) * 60000, elapsed = Date.now() - cur.actualStart;
+  const rem = cur.remainingMs, over = rem < 0, R = 82, C = 2 * Math.PI * R, pct = Math.min(1, Math.max(0, elapsed / total));
+  const mins = over ? `+${Math.ceil(-rem / 60000)}` : Math.ceil(rem / 60000);
+  const col = over ? 'var(--warn)' : 'var(--p)'; // quiet: only turns amber once the planned time is over
+  return `<div class="ring"><svg width="190" height="190"><circle cx="95" cy="95" r="${R}" fill="none" stroke="var(--s)" stroke-width="12"/><circle cx="95" cy="95" r="${R}" fill="none" stroke="${col}" stroke-width="12" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}"/></svg>
+  <div class="mid"><div><div class="mins" style="color:${over ? 'var(--warn)' : 'inherit'}">${mins}</div><div class="muted">${over ? 'דקות מעבר ליעד' : 'דקות נשארו'}</div></div></div></div>`;
+}
+function renderToday(f, sg, pend) {
+  tabs({ messages: pend });
+  const cur = f.current, next = f.next, upcoming = f.appts.filter((a) => ['confirmed', 'arrived', 'pending'].includes(a.status));
+  for (const h of f.hints) { const k = h.type + (f.current?.id || '') + h.text; if (['ending_soon', 'overdue'].includes(h.type) && !notified[k]) { notified[k] = 1; navigator.vibrate && navigator.vibrate([120, 60, 120]); } }
+  let center;
+  if (cur) center = `<div class="hero card">${ring(cur, f.policy.alertMin)}<h2>${esc(cur.customerName)}</h2><div class="muted">${esc(cur.serviceName)} · יעד ${cur.duration}${cur.extra ? ` (+${cur.extra})` : ''} דק'</div><div style="margin-top:8px"><button class="chip" data-ext="15">+15</button></div></div>`;
+  else if (f.block) center = `<div class="hero card"><h2>הפסקה</h2><div class="muted">עד ${hm(f.block.end)}</div></div>`;
+  else if (next && next.status === 'arrived') center = `<div class="hero card"><div class="muted">ממתין/ה</div><h2>${esc(next.customerName)}</h2><div class="muted">${esc(next.serviceName)} · ${next.duration} דק'</div></div>`;
+  else if (next) center = `<div class="hero card"><div class="muted">הבא בתור · ${hm(next.start)}</div><h2>${esc(next.customerName)}</h2><div class="muted">${esc(next.serviceName)} · ${next.duration} דק'</div></div>`;
+  else center = `<div class="hero card"><h2>אין טיפול פתוח</h2><div class="muted">אין תורים נוספים להיום</div></div>`;
+  const hints = f.hints.map((h) => `<div class="hint"><span>${esc(h.text)}</span>${h.type === 'signal_not_coming' ? `<button class="btn danger" data-cancel="${h.apptId}">בטל תור</button>` : ''}</div>`).join('') + (pend ? `<div class="hint"><span>${pend} הודעות עיכוב ממתינות לאישור שלך</span><button class="btn soft" data-tab2="messages">לצפייה</button></div>` : '');
+  const rows = upcoming.map((a) => {
+    const late = a.estStart && Math.round((a.estStart - a.start) / 60000) >= 5;
+    return `<div class="qrow" data-row="${a.id}"><div class="t">${hm(a.start)}${late ? `<div class="muted" style="color:var(--warn)">→ ${hm(Math.ceil(a.estStart / 300000) * 300000)}</div>` : ''}</div><div style="flex:1"><b>${esc(a.customerName)}</b> ${a.status === 'arrived' ? '<span class="badge ok">הגיע</span>' : a.status === 'pending' ? '<span class="badge warn">ממתין לאישור</span>' : ''}<div class="muted">${esc(a.serviceName)} · ${a.duration} דק' · ${SRC[a.source] || ''}</div></div>${a.status === 'pending' ? `<div class="row"><button class="btn" data-ap="${a.id}">אשר</button><button class="btn danger" data-rj="${a.id}">דחה</button></div>` : ''}</div>`;
+  }).join('') || '<div class="muted">אין תורים ממתינים</div>';
+  const done = f.appts.filter((a) => a.status === 'done').length;
+  const sgHtml = sg.length ? `<h3>הצעות לאריזת היום</h3>${sg.map((s) => `<div class="card"><b>${esc(s.title)}</b><div class="muted">${esc(s.detail || '')}</div><div class="row" style="margin-top:8px"><button class="btn" data-sga="${esc(s.id)}">אישור</button><button class="btn ghost" data-sgd="${esc(s.id)}">לא עכשיו</button></div></div>`).join('')}` : '';
+  view().innerHTML = `${provPicker()}<div class="row" style="justify-content:space-between;margin-bottom:8px"><div><b>${dayName(f.dateKey)}</b><div class="muted">${f.remaining} תורים נשארו · ${done} הסתיימו</div></div><div>${f.behindMin >= 5 ? `<span class="badge warn">באיחור ${f.behindMin} דק'</span>` : '<span class="badge ok">בזמן</span>'}</div></div>${hints}${center}<div class="card"><h3>הבאים בתור</h3>${rows}</div>${sgHtml}`;
+  bindProv(today); bindToday(f);
+  // bottom bar by mode
+  let bar;
+  if (f.mode === 'in_service') bar = `<div class="in"><button class="btn" data-ext="10">+10 דקות</button><button class="btn soft" data-ext="5">+5</button><button class="btn ghost" data-do="end">סיום</button></div>`;
+  else if (f.mode === 'arrived') bar = `<div class="in"><button class="btn" data-do="start">התחיל טיפול</button><button class="btn soft" data-do="unarrive">חזר להמתנה</button><button class="btn ghost" data-walk="1">Walk-in</button></div>`;
+  else if (next) bar = `<div class="in"><button class="btn" data-do="arrive">הגיע</button><button class="btn soft" data-do="noshow">לא הגיע</button><a class="btn ghost" style="display:grid;place-items:center;text-decoration:none" href="tel:${esc(next.phone || '')}">התקשר</a></div>`;
+  else bar = `<div class="in"><button class="btn" data-walk="1">Walk-in</button><button class="btn soft" data-break="1">הפסקה</button><button class="btn ghost" data-tab2="week">+ תור</button></div>`;
+  $('#barhost').innerHTML = `<div class="bar">${bar}</div>`;
+  $('#barhost').querySelectorAll('[data-do]').forEach((b) => (b.onclick = () => doAct(b.dataset.do, cur || next)));
+  bindExt(cur); bindMisc(f);
+}
+function bindExt(cur) { document.querySelectorAll('[data-ext]').forEach((b) => (b.onclick = async () => {
+  const minutes = +b.dataset.ext, path = `/appts/${cur.id}/extend`;
+  try { const r = await A(path, { method: 'POST', body: { minutes } }); if (r.pendingApproval) alert('העיכוב מעל 15 דקות — ההודעה ללקוח הבא ממתינה לאישור שלך בלשונית הודעות.'); }
+  catch (e) { if (e.status === 409 && confirm(e.message + '\nלאשר חריגה?')) await toast(() => A(path, { method: 'POST', body: { minutes, override: true } })); else if (e.status !== 409) alert(e.message); }
+  today();
+})); }
+function bindToday() { view().querySelectorAll('[data-ap]').forEach((b) => (b.onclick = async (e) => { e.stopPropagation(); await toast(() => A(`/appts/${b.dataset.ap}/approve`, { method: 'POST' })); today(); })); view().querySelectorAll('[data-rj]').forEach((b) => (b.onclick = async (e) => { e.stopPropagation(); await toast(() => A(`/appts/${b.dataset.rj}/reject`, { method: 'POST' })); today(); })); }
+function bindMisc(f) {
+  document.querySelectorAll('[data-tab2]').forEach((b) => (b.onclick = () => go(b.dataset.tab2)));
+  document.querySelectorAll('[data-cancel]').forEach((b) => (b.onclick = async () => { if (confirm('לבטל את התור?')) { await toast(() => A(`/appts/${b.dataset.cancel}/cancel`, { method: 'POST' })); today(); } }));
+  document.querySelectorAll('[data-sga]').forEach((b) => (b.onclick = async () => { await toast(() => A('/suggestions/approve?providerId=' + prov, { method: 'POST', body: { id: b.dataset.sga } })); today(); }));
+  document.querySelectorAll('[data-sgd]').forEach((b) => (b.onclick = async () => { await A('/suggestions/dismiss', { method: 'POST', body: { id: b.dataset.sgd } }); today(); }));
+  document.querySelectorAll('[data-walk]').forEach((b) => (b.onclick = walkin));
+  document.querySelectorAll('[data-break]').forEach((b) => (b.onclick = async () => { await toast(() => A('/break', { method: 'POST', body: { providerId: prov, minutes: 15 } })); today(); }));
+  view().querySelectorAll('[data-row]').forEach((r) => (r.onclick = () => rowSheet(f.appts.find((a) => a.id === r.dataset.row))));
+}
+async function doAct(name, a) { await toast(() => A(`/appts/${a.id}/${name}`, { method: 'POST' })); today(); }
+function rowSheet(a) {
+  modal(`<h2>${esc(a.customerName)}</h2><div class="muted">${esc(a.serviceName)} · ${hm(a.start)} · ${esc(a.phone || '')}</div>
+  <label>הערה לתור</label><textarea id="nt" rows="2">${esc(a.notes || '')}</textarea>
+  <div class="row" style="margin-top:12px"><button class="btn grow" id="sv">שמירה</button><button class="btn ghost grow" id="mv">הזזה</button></div>
+  <div class="row" style="margin-top:8px"><button class="btn danger grow" id="ns">לא הגיע</button><button class="btn danger grow" id="cn">ביטול תור</button></div><button class="btn ghost block" style="margin-top:8px" id="cl">סגירה</button>`);
+  $('#cl').onclick = closeModal;
+  $('#sv').onclick = async () => { await toast(() => A('/appts/' + a.id, { method: 'PUT', body: { notes: $('#nt').value } })); closeModal(); today(); };
+  $('#ns').onclick = async () => { await toast(() => A(`/appts/${a.id}/noshow`, { method: 'POST' })); closeModal(); today(); };
+  $('#cn').onclick = async () => { if (confirm('לבטל ולעדכן את הלקוח?')) { await toast(() => A(`/appts/${a.id}/cancel`, { method: 'POST' })); closeModal(); today(); } };
+  $('#mv').onclick = () => moveSheet(a);
+}
+function moveSheet(a) {
+  const d = new Date(a.start), pad = (n) => String(n).padStart(2, '0');
+  modal(`<h2>הזזת תור</h2><label>תאריך ושעה חדשים (בקפיצות של רבע שעה)</label><input type="datetime-local" id="dt" value="${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}"><p class="muted">הלקוח יקבל הודעה עם השעה החדשה.</p><div class="row"><button class="btn grow" id="ok">הזז</button><button class="btn ghost grow" id="x">ביטול</button></div>`);
+  $('#x').onclick = closeModal;
+  $('#ok').onclick = async () => { await toast(async () => { await A(`/appts/${a.id}/move`, { method: 'POST', body: { start: new Date($('#dt').value).getTime() } }); closeModal(); today(); }); };
+}
+async function walkin() {
+  const svcs = biz.services.filter((s) => s.active && s.walkin);
+  if (!svcs.length) return alert('אין שירותים המסומנים כמתאימים ל־Walk-in (שירותים ושעות).');
+  modal(`<h2>Walk-in</h2><div class="chips" id="ws">${svcs.map((s) => `<button class="chip" data-s="${s.id}">${esc(s.name)} · ${s.duration}'</button>`).join('')}</div><div id="wr" style="margin-top:14px"></div>`);
+  $('#ws').querySelectorAll('[data-s]').forEach((b) => (b.onclick = async () => {
+    const r = await A('/walkin/check', { method: 'POST', body: { providerId: prov, serviceId: b.dataset.s } }).catch((e) => ({ err: e.message }));
+    const w = $('#wr');
+    if (r.err) return (w.innerHTML = alertBox(r.err));
+    if (r.when === 'none') return (w.innerHTML = '<div class="err">אין מקום היום</div><button class="btn ghost block" id="cl">סגירה</button>', ($('#cl').onclick = closeModal));
+    w.innerHTML = `<div class="big" style="font-size:1.6rem">${r.when === 'now' ? 'אפשר עכשיו' : `עוד ${r.minutes} דקות (${hm(r.start)})`}</div><label>שם (אופציונלי)</label><input id="wn"><label>טלפון (אופציונלי, לעדכונים)</label><input id="wp" inputmode="tel"><div class="row" style="margin-top:12px"><button class="btn grow" id="wgo">הוסף לתור</button><button class="btn ghost grow" id="cl">ביטול</button></div>`;
+    $('#cl').onclick = closeModal;
+    $('#wgo').onclick = async () => { await toast(async () => { await A('/walkin', { method: 'POST', body: { providerId: prov, serviceId: b.dataset.s, name: $('#wn').value, phone: $('#wp').value } }); closeModal(); today(); }); };
+  }));
+}
+
+// ---------- WEEK ----------
+let weekStart = null;
+async function week() {
+  const days = await A(`/week?providerId=${prov}${weekStart ? '&start=' + weekStart : ''}`);
+  weekStart = days[0].date;
+  view().innerHTML = `${provPicker()}<div class="row" style="justify-content:space-between;margin-bottom:8px"><div class="row"><button class="chip" id="pv">→ קודם</button><button class="chip" id="nx">הבא ←</button></div><button class="btn" id="add">+ תור ידני</button></div>
+  <div class="week">${days.map((d) => `<div class="day"><b>${dayName(d.date)}</b><div class="muted">${d.windows.length ? d.windows.map((w) => hm(w.start) + '–' + hm(w.end)).join(', ') : 'סגור'}</div>${d.appts.map((a) => `<div class="ap" ${['pending', 'confirmed'].includes(a.status) ? `data-wa="${a.id}"` : ''}><b>${hm(a.start)}</b> ${esc(a.customerName)}<div class="muted">${esc(a.serviceName)}${a.status === 'cancelled' ? ' · בוטל' : ''}</div></div>`).join('')}${d.blocks.map((b) => `<div class="ap" style="background:#e5e7eb">${b.label === 'break' ? 'הפסקה' : 'חסום'} ${hm(b.start)}–${hm(b.end)} <button class="chip" data-rb="${b.id}">✕</button></div>`).join('')}</div>`).join('')}</div>
+  <div class="row" style="margin-top:12px"><button class="btn ghost" id="blk">חסימת שעות</button></div>`;
+  bindProv(week);
+  $('#pv').onclick = () => { weekStart = addDaysKey(weekStart, -7); week(); }; $('#nx').onclick = () => { weekStart = addDaysKey(weekStart, 7); week(); };
+  $('#add').onclick = manualAppt; $('#blk').onclick = blockSheet;
+  view().querySelectorAll('[data-rb]').forEach((b) => (b.onclick = async () => { await A('/blocks/' + b.dataset.rb, { method: 'DELETE' }); week(); }));
+  view().querySelectorAll('[data-wa]').forEach((el) => (el.onclick = () => { const a = days.flatMap((d) => d.appts).find((x) => x.id === el.dataset.wa); rowSheet({ ...a, phone: '', customerName: a.customerName, serviceName: a.serviceName }); }));
+}
+const addDaysKey = (k, n) => { const d = new Date(k + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+function manualAppt() {
+  modal(`<h2>תור ידני</h2><label>שירות</label><select id="sv">${biz.services.filter((s) => s.active).map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select><label>תאריך ושעה</label><input type="datetime-local" id="dt" step="900"><label>שם</label><input id="nm"><label>טלפון</label><input id="ph" inputmode="tel"><div class="row" style="margin-top:12px"><button class="btn grow" id="ok">הוספה</button><button class="btn ghost grow" id="x">ביטול</button></div>`);
+  $('#x').onclick = closeModal;
+  $('#ok').onclick = async () => { await toast(async () => { await A('/appts', { method: 'POST', body: { serviceId: $('#sv').value, providerId: prov, start: new Date($('#dt').value).getTime(), name: $('#nm').value, phone: $('#ph').value } }); closeModal(); week(); }); };
+}
+function blockSheet() {
+  modal(`<h2>חסימת שעות</h2><label>מתי</label><input type="datetime-local" id="a"><label>עד</label><input type="datetime-local" id="b"><div class="row" style="margin-top:12px"><button class="btn grow" id="ok">חסום</button><button class="btn ghost grow" id="x">ביטול</button></div>`);
+  $('#x').onclick = closeModal;
+  $('#ok').onclick = async () => { await toast(async () => { await A('/blocks', { method: 'POST', body: { providerId: prov, start: new Date($('#a').value).getTime(), end: new Date($('#b').value).getTime() } }); closeModal(); week(); }); };
+}
+
+// ---------- CUSTOMERS ----------
+async function customers() {
+  const list = await A('/customers');
+  view().innerHTML = `<input id="q" placeholder="חיפוש שם / טלפון" style="margin-bottom:10px"><div class="card" id="cl"></div>`;
+  const draw = () => { const q = $('#q').value.trim(); $('#cl').innerHTML = list.filter((c) => !q || c.name.includes(q) || c.phone.includes(q)).map((c) => `<div class="qrow" data-c="${c.id}" style="cursor:pointer"><div><b>${esc(c.name)}</b><div class="muted">${esc(c.phone)}</div></div><div>${c.marketingConsent ? '<span class="badge ok">שיווק</span>' : ''}${c.flexMinutes ? '<span class="badge">גמיש/ה</span>' : ''}</div></div>`).join('') || '<div class="muted">אין לקוחות</div>'; $('#cl').querySelectorAll('[data-c]').forEach((r) => (r.onclick = () => custCard(r.dataset.c))); };
+  $('#q').oninput = draw; draw();
+}
+async function custCard(id) {
+  const d = await A('/customers/' + id), c = d.customer;
+  modal(`<h2>${esc(c.name)}</h2><div class="muted">${esc(c.phone)}</div>
+  <label>הערות פנימיות</label><textarea id="nt" rows="3">${esc(c.notes)}</textarea><label>תגיות (מופרדות בפסיק)</label><input id="tg" value="${esc(c.tags.join(', '))}">
+  <label class="check"><input type="checkbox" id="mk" ${c.marketingConsent ? 'checked' : ''}> הסכמה לקבלת שיווק</label>
+  <label class="check"><input type="checkbox" id="fx" ${c.flexMinutes ? 'checked' : ''}> מוכנ/ה להזיז עד 15 דקות באותו יום</label>
+  ${d.durationSuggestions.map((s) => `<div class="hint"><span>${esc(s.service)}: בפועל בממוצע ${s.suggested} דק' (כעת ${s.current}, ${s.samples} טיפולים)</span><button class="btn soft" data-dur="${s.serviceId}:${s.suggested}">עדכון</button></div>`).join('')}
+  <h3 style="margin-top:12px">היסטוריה</h3><table>${d.history.slice(0, 15).map((h) => `<tr><td>${new Date(h.start).toLocaleDateString('he-IL')}</td><td>${esc(h.service || '')}</td><td>${h.actual ? `${h.actual}' (תוכנן ${h.planned}')` : ''}</td><td>${h.status}</td></tr>`).join('')}</table>
+  <div class="row" style="margin-top:12px"><button class="btn grow" id="sv">שמירה</button><button class="btn ghost grow" id="x">סגירה</button></div>`);
+  $('#x').onclick = closeModal;
+  $('#sv').onclick = async () => { await toast(async () => { await A('/customers/' + id, { method: 'PUT', body: { notes: $('#nt').value, tags: $('#tg').value.split(',').map((t) => t.trim()).filter(Boolean), marketingConsent: $('#mk').checked, flexMinutes: $('#fx').checked ? 15 : 0 } }); closeModal(); customers(); }); };
+  document.querySelectorAll('[data-dur]').forEach((b) => (b.onclick = async () => { const [sid, v] = b.dataset.dur.split(':'); await A('/customers/' + id, { method: 'PUT', body: { durations: { [sid]: +v } } }); custCard(id); }));
+}
+
+// ---------- SERVICES & HOURS ----------
+const DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+async function services() {
+  biz = await A('/me');
+  view().innerHTML = `<div class="card"><h2>שירותים</h2>${biz.services.map((s) => `<div class="qrow" data-s="${s.id}" style="cursor:pointer"><div><b>${esc(s.name)}</b> ${s.active ? '' : '<span class="badge">מוסתר</span>'} ${s.walkin ? '<span class="badge">Walk-in</span>' : ''}<div class="muted">${s.duration}' + באפר ${s.buffer}' · ${money(s.price)}</div></div><span>✎</span></div>`).join('') || '<div class="muted">עוד אין שירותים</div>'}<button class="btn block" id="ns" style="margin-top:10px">+ שירות חדש</button></div>
+  <div class="card"><h2>שעות פעילות</h2>${DAYS.map((n, i) => { const w = (biz.hours[i] || [])[0]; return `<div class="row" style="margin-bottom:6px"><b style="width:56px">${n}</b><label class="check" style="margin:0"><input type="checkbox" data-open="${i}" ${w ? 'checked' : ''}> פתוח</label><input type="time" data-from="${i}" value="${w?.open || '09:00'}" style="width:110px"><input type="time" data-to="${i}" value="${w?.close || '18:00'}" style="width:110px"></div>`; }).join('')}<button class="btn" id="sh">שמירת שעות</button></div>
+  <div class="card"><h2>חריגים (חופשה / ערב חג)</h2>${Object.entries(biz.exceptions).map(([k, v]) => `<div class="qrow"><span>${dayName(k)}: ${v && v.length ? v[0].open + '–' + v[0].close : 'סגור'}</span><button class="chip" data-rx="${k}">✕</button></div>`).join('')}<div class="row" style="margin-top:8px"><input type="date" id="xd" style="width:auto"><input type="time" id="xf" style="width:110px"><input type="time" id="xt" style="width:110px"><button class="btn ghost" id="xa">הוסף (ריק = סגור)</button></div></div>
+  <div class="card"><h2>נותני שירות</h2>${biz.providers.map((p) => `<div class="qrow"><span>${esc(p.name)} ${p.active ? '' : '<span class="badge">לא פעיל</span>'}</span><button class="chip" data-tp="${p.id}">${p.active ? 'השבתה' : 'הפעלה'}</button></div>`).join('')}<div class="row" style="margin-top:8px"><input id="pn" placeholder="שם" style="flex:1"><button class="btn ghost" id="pa">הוספת כיסא / עובד/ת</button></div></div>`;
+  $('#ns').onclick = () => svcSheet(); view().querySelectorAll('[data-s]').forEach((r) => (r.onclick = () => svcSheet(biz.services.find((s) => s.id === r.dataset.s))));
+  $('#sh').onclick = async () => { const hours = {}; for (let i = 0; i < 7; i++) hours[i] = $(`[data-open="${i}"]`).checked ? [{ open: $(`[data-from="${i}"]`).value, close: $(`[data-to="${i}"]`).value }] : []; await toast(() => A('/hours', { method: 'PUT', body: { hours } })); services(); };
+  $('#xa').onclick = async () => { const k = $('#xd').value; if (!k) return; const ex = { ...biz.exceptions, [k]: $('#xf').value && $('#xt').value ? [{ open: $('#xf').value, close: $('#xt').value }] : [] }; await toast(() => A('/hours', { method: 'PUT', body: { exceptions: ex } })); services(); };
+  view().querySelectorAll('[data-rx]').forEach((b) => (b.onclick = async () => { const ex = { ...biz.exceptions }; delete ex[b.dataset.rx]; await A('/hours', { method: 'PUT', body: { exceptions: ex } }); services(); }));
+  $('#pa').onclick = async () => { await A('/providers', { method: 'POST', body: { name: $('#pn').value } }); services(); };
+  view().querySelectorAll('[data-tp]').forEach((b) => (b.onclick = async () => { const p = biz.providers.find((x) => x.id === b.dataset.tp); await A('/providers/' + p.id, { method: 'PUT', body: { active: !p.active } }); services(); }));
+}
+function svcSheet(s = { name: '', publicLabel: '', description: '', duration: 45, buffer: 10, price: 100, active: true, walkin: false }) {
+  modal(`<h2>${s.id ? 'עריכת שירות' : 'שירות חדש'}</h2><label>שם</label><input id="n" value="${esc(s.name)}"><label>שם ציבורי בלוח החי (כללי, בלי פרטים)</label><input id="pl" value="${esc(s.publicLabel)}"><label>תיאור קצר</label><input id="d" value="${esc(s.description)}">
+  <div class="row"><div class="grow"><label>משך (דק')</label><input type="number" id="du" value="${s.duration}"></div><div class="grow"><label>באפר (דק')</label><input type="number" id="bu" value="${s.buffer}"></div><div class="grow"><label>מחיר ₪</label><input type="number" id="pr" value="${s.price}"></div></div>
+  <label class="check"><input type="checkbox" id="ac" ${s.active ? 'checked' : ''}> פעיל (מוצג ללקוחות)</label><label class="check"><input type="checkbox" id="wk" ${s.walkin ? 'checked' : ''}> מתאים ל־Walk-in</label>
+  <div class="row" style="margin-top:12px"><button class="btn grow" id="ok">שמירה</button><button class="btn ghost grow" id="x">ביטול</button></div>`);
+  $('#x').onclick = closeModal;
+  $('#ok').onclick = async () => { const body = { name: $('#n').value, publicLabel: $('#pl').value || $('#n').value, description: $('#d').value, duration: +$('#du').value, buffer: +$('#bu').value, price: +$('#pr').value, active: $('#ac').checked, walkin: $('#wk').checked }; await toast(async () => { await A(s.id ? '/services/' + s.id : '/services', { method: s.id ? 'PUT' : 'POST', body }); closeModal(); services(); }); };
+}
+
+// ---------- MESSAGES ----------
+const MT = { created: 'תור נוצר', pending: 'ממתין לאישור', approved: 'אושר', rejected: 'נדחה', reminder24: 'תזכורת 24ש׳', reminder2: 'תזכורת 2ש׳', prepare: 'להתכונן', delay_soft: 'עיכוב קל', delay_update: 'עדכון שעה', delay_clear: 'עיכוב', delay_big: 'עיכוב משמעותי', early: 'הקדמה אפשרית', cancelled: 'ביטול', moved: 'הזזה', gap_open: 'חור נפתח', move_offer: 'הצעת הקדמה', campaign: 'מבצע' };
+const MS = { queued: 'בתור', sent: 'נשלח', failed: 'נכשל', needs_approval: 'ממתין לאישור' };
+async function messages() {
+  const [list] = await Promise.all([A('/messages')]);
+  const pend = list.filter((m) => m.status === 'needs_approval');
+  view().innerHTML = `${pend.map((m) => `<div class="card" style="border-color:var(--warn)"><b>ממתין לאישור שלך · ${esc(m.customerName)}</b><textarea rows="4" data-mt="${m.id}" style="margin-top:8px">${esc(m.text)}</textarea><div class="row" style="margin-top:8px"><button class="btn grow" data-ma="${m.id}">אישור ושליחה</button></div></div>`).join('')}
+  <div class="card"><h2>משלוח מבצע / אירוע</h2><p class="muted">ערוץ נפרד מהודעות התפעול. נשלח רק למי שאישר שיווק, עם קישור הסרה בכל הודעה.</p>
+  <label>למי</label><select id="sg"><option value="all">כולם</option><option value="service">לפי שירות אחרון</option><option value="inactive">לא היו X שבועות</option><option value="tag">לפי תגית</option></select><div id="sgx"></div>
+  <label>הודעה</label><textarea id="ct" rows="3" placeholder="שישי ג׳ל ב־10% הנחה..."></textarea><div class="row" style="margin-top:8px"><button class="btn ghost" id="pv">תצוגה מקדימה</button><button class="btn" id="sd">שליחה</button></div><div id="pvr"></div></div>
+  <div class="card"><h2>יומן שליחות</h2><table>${list.map((m) => `<tr><td>${new Date(m.at).toLocaleString('he-IL', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'numeric' })}</td><td>${esc(m.customerName || '')}</td><td><span class="badge ${m.pipeline === 'marketing' ? 'warn' : ''}">${m.pipeline === 'marketing' ? 'שיווק' : 'תפעול'}</span> ${MT[m.type] || m.type}</td><td>${MS[m.status] || m.status}</td></tr>`).join('')}</table></div>`;
+  view().querySelectorAll('[data-ma]').forEach((b) => (b.onclick = async () => { await toast(() => A(`/messages/${b.dataset.ma}/approve`, { method: 'POST', body: { text: view().querySelector(`[data-mt="${b.dataset.ma}"]`).value } })); messages(); }));
+  const seg = () => { const t = $('#sg').value; return t === 'service' ? { type: t, serviceId: $('#sx').value } : t === 'inactive' ? { type: t, weeks: +$('#sx').value } : t === 'tag' ? { type: t, tag: $('#sx').value } : { type: 'all' }; };
+  $('#sg').onchange = () => { const t = $('#sg').value; $('#sgx').innerHTML = t === 'service' ? `<select id="sx">${biz.services.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>` : t === 'inactive' ? '<input id="sx" type="number" value="4" min="1">' : t === 'tag' ? '<input id="sx" placeholder="תגית">' : ''; };
+  $('#pv').onclick = async () => { const r = await toast(() => A('/campaigns/preview', { method: 'POST', body: { segment: seg(), text: $('#ct').value } })); if (r) $('#pvr').innerHTML = `<div class="okmsg">יישלח ל־${r.eligible} · דילוג: ${r.skippedNoConsent} ללא הסכמה, ${r.skippedFrequency} תדירות</div><pre style="white-space:pre-wrap;background:#f3f4f6;padding:10px;border-radius:12px">${esc(r.sample)}</pre>`; };
+  $('#sd').onclick = async () => { if (!$('#ct').value.trim()) return alert('כתבו הודעה'); if (!confirm('לשלוח את המבצע?')) return; const r = await toast(() => A('/campaigns/send', { method: 'POST', body: { segment: seg(), text: $('#ct').value } })); if (r) { alert(`נשלח ל־${r.sent}`); messages(); } };
+}
+
+// ---------- WAITLIST ----------
+async function waitlist() {
+  const list = await A('/waitlist');
+  view().innerHTML = `<div class="card"><h2>רשימת המתנה</h2>${list.map((w) => `<div class="qrow"><div><b>${esc(w.customerName)}</b> ${w.status === 'offered' ? '<span class="badge warn">הוצע מקום</span>' : ''}<div class="muted">${esc(w.serviceName)} · ${esc(w.phone)}${w.note ? ' · ' + esc(w.note) : ''}</div></div><button class="chip" data-rm="${w.id}">הסר</button></div>`).join('') || '<div class="muted">אף אחד לא ממתין</div>'}</div>
+  <div class="card"><h3>הוספה</h3><label>שירות</label><select id="ws">${biz.services.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select><label>שם</label><input id="wn"><label>טלפון</label><input id="wp" inputmode="tel"><label>הערה</label><input id="wt"><button class="btn block" id="wa" style="margin-top:12px">הוסף</button></div>`;
+  $('#wa').onclick = async () => { await toast(() => A('/waitlist', { method: 'POST', body: { serviceId: $('#ws').value, name: $('#wn').value, phone: $('#wp').value, note: $('#wt').value } })); waitlist(); };
+  view().querySelectorAll('[data-rm]').forEach((b) => (b.onclick = async () => { await A('/waitlist/' + b.dataset.rm, { method: 'DELETE' }); waitlist(); }));
+}
+
+// ---------- BRAND & PROFILE ----------
+async function brand() {
+  biz = await A('/me'); const b = biz.brand, c = biz.contact, base = location.origin;
+  view().innerHTML = `<div class="card"><h2>קישורים</h2><div class="muted">עמוד הזמנה (לביו באינסטגרם / QR)</div><input readonly value="${base}/b/${biz.slug}" onclick="this.select()"><div class="muted" style="margin-top:8px">לוח סטטוס חי</div><input readonly value="${base}/live/${biz.slug}" onclick="this.select()"></div>
+  <div class="card"><h2>פרטי העסק</h2><label>שם העסק</label><input id="nm" value="${esc(biz.name)}"><label>משפט קצר</label><input id="tl" value="${esc(biz.tagline)}"><label>כתובת</label><input id="ad" value="${esc(c.address)}"><label>וואטסאפ (בפורמט 972501234567)</label><input id="wa" value="${esc(c.whatsapp)}"><label>אינסטגרם (שם משתמש)</label><input id="ig" value="${esc(c.instagram)}"><label>טלפון</label><input id="ph" value="${esc(c.phone)}"><label class="check"><input type="checkbox" id="sp" ${c.showPhonePublic ? 'checked' : ''}> להציג טלפון בלוח ובעמודים הציבוריים</label></div>
+  <div class="card"><h2>מותג</h2><div class="row"><div class="grow"><label>צבע ראשי</label><input type="color" id="c1" value="${b.primary}"></div><div class="grow"><label>צבע משני</label><input type="color" id="c2" value="${b.secondary}"></div><div class="grow"><label>רקע</label><input type="color" id="c3" value="${b.bg}"></div></div>
+  <label>גופן</label><select id="fn">${['Heebo', 'Assistant', 'Rubik', 'Varela Round', 'Frank Ruhl Libre'].map((f) => `<option ${b.font === f ? 'selected' : ''}>${f}</option>`).join('')}</select>
+  <label>טון ההודעות</label><select id="tn"><option value="neutral" ${b.tone === 'neutral' ? 'selected' : ''}>ניטרלי</option><option value="female" ${b.tone === 'female' ? 'selected' : ''}>פנייה בלשון נקבה</option><option value="male" ${b.tone === 'male' ? 'selected' : ''}>פנייה בלשון זכר</option></select>
+  <label>קישור ללוגו (כתובת תמונה)</label><input id="lg" value="${esc(b.logo.startsWith('data:') ? '' : b.logo)}"><label>קישור לתמונת כיסוי</label><input id="cv" value="${esc(b.cover.startsWith('data:') ? '' : b.cover)}"><button class="btn block" id="sv" style="margin-top:14px">שמירה</button></div>`;
+  $('#sv').onclick = async () => { await toast(async () => { await A('/profile', { method: 'PUT', body: { name: $('#nm').value, tagline: $('#tl').value, address: $('#ad').value, whatsapp: $('#wa').value, instagram: $('#ig').value, phone: $('#ph').value, showPhonePublic: $('#sp').checked } }); await A('/brand', { method: 'PUT', body: { primary: $('#c1').value, secondary: $('#c2').value, bg: $('#c3').value, font: $('#fn').value, tone: $('#tn').value, logo: $('#lg').value || b.logo, cover: $('#cv').value || b.cover } }); biz = await A('/me'); applyBrand(biz.brand); brand(); }); };
+}
+
+// ---------- POLICY ----------
+async function policy() {
+  biz = await A('/me'); const p = biz.policy;
+  const num = (id, label, v, hint = '') => `<div><label>${label}</label><input type="number" id="${id}" value="${v}">${hint ? `<div class="muted">${hint}</div>` : ''}</div>`;
+  const sel = (id, label, opts, v) => `<div><label>${label}</label><select id="${id}">${opts.map((o) => `<option ${o == v ? 'selected' : ''}>${o}</option>`).join('')}</select></div>`;
+  view().innerHTML = `<div class="card"><h2>מדיניות</h2>${num('leadMin', 'Lead time לקביעה (דקות)', p.leadMin)}${num('windowDays', 'חלון הזמנה קדימה (ימים)', p.windowDays)}${num('cancelHours', 'ביטול / הזזה עצמית עד (שעות לפני)', p.cancelHours)}${sel('alertMin', 'התראת סיום (דקות לפני היעד)', [5, 8, 10], p.alertMin)}${sel('gapThreshold', 'סף חור לאריזה (דקות)', [20, 25, 30, 40], p.gapThreshold)}${num('softDelayMax', 'סף עיכוב קל (עד X דקות)', p.softDelayMax)}${num('marketingMaxDays', 'שיווק: לכל היותר אחת ל־X ימים', p.marketingMaxDays, 'ניתן לשנות, אי אפשר לבטל את ה־opt-out')}<label class="check"><input type="checkbox" id="auto" ${p.autoConfirm ? 'checked' : ''}> אישור אוטומטי של תורים אונליין</label><button class="btn block" id="sv" style="margin-top:14px">שמירה</button></div>`;
+  $('#sv').onclick = async () => { const g = (i) => +$('#' + i).value; await toast(() => A('/policy', { method: 'PUT', body: { leadMin: g('leadMin'), windowDays: g('windowDays'), cancelHours: g('cancelHours'), alertMin: g('alertMin'), gapThreshold: g('gapThreshold'), softDelayMax: g('softDelayMax'), marketingMaxDays: g('marketingMaxDays'), autoConfirm: $('#auto').checked } })); policy(); };
+}
+
+// ---------- METRICS ----------
+async function metrics() {
+  const m = await A('/metrics'), pct = (v) => (v == null ? '—' : v + '%');
+  view().innerHTML = `<div class="card"><h2>מדדים · 30 ימים</h2><table>
+  <tr><td>טיפולים שהסתיימו</td><td><b>${m.sessions}</b></td></tr><tr><td>טיפולים שנפתחו בטיימר (יעד 80%+)</td><td><b>${pct(m.timerUsagePct)}</b></td></tr>
+  <tr><td>פער ממוצע בין משך תקן לבפועל (דק')</td><td><b>${m.avgPlannedVsActual ?? '—'}</b></td></tr><tr><td>הודעות עיכוב</td><td><b>${m.delayMessages}</b></td></tr><tr><td>שיעור אי־הגעה</td><td><b>${pct(m.noShowPct)}</b></td></tr>
+  <tr><td>חורים: הוצעו / אושרו / נתפסו</td><td><b>${m.gaps.gapsOffered} / ${m.gaps.gapsApproved} / ${m.gaps.gapsClaimed}</b></td></tr><tr><td>הודעות שיווק / הסרות</td><td><b>${m.marketingSent} / ${m.marketingOptOuts}</b></td></tr></table></div>`;
+}
+boot();
+</script></body></html>
