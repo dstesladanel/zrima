@@ -233,5 +233,8 @@
       "walkin": false,
       "active": true
     }
-  ]
+  ],
+  "policy": {
+    "autoConfirm": false
+  }
 }

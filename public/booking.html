@@ -24,7 +24,7 @@ function stepTwo() {
   else h += '<div class="chips">' + st.days.map((d) => '<button class="chip ' + (st.date === d.date ? 'on' : '') + '" data-date="' + d.date + '">' + esc(dayName(d.date)) + '</button>').join('') + '</div>';
   if (st.date) h += '<div class="chips" style="margin-top:12px">' + st.slots.map((x) => '<button class="chip ' + (st.start === x.start ? 'on' : '') + '" data-start="' + x.start + '" data-p="' + x.providerId + '">' + x.time + '</button>').join('') + '</div>';
   h += '</div>';
-  if (st.start) h += '<form id="f" class="card"><h2 id="form">3. הפרטים שלכם</h2><label>שם</label><input name="name" required maxlength="60" autocomplete="name"><label>טלפון (וואטסאפ)</label><input name="phone" required inputmode="tel" autocomplete="tel" placeholder="050-0000000"><label class="check"><input type="checkbox" name="mk"> אשמח לקבל מבצעים ועדכונים מהעסק (אפשר להסיר בכל עת)</label><button class="btn block" style="margin-top:14px">אישור התור</button></form>';
+  if (st.start) h += '<form id="f" class="card"><h2 id="form">3. הפרטים שלכם</h2><label>שם</label><input name="name" required maxlength="60" autocomplete="name"><label>טלפון (וואטסאפ)</label><input name="phone" required inputmode="tel" autocomplete="tel" placeholder="050-0000000"><label class="check"><input type="checkbox" name="mk"> אשמח לקבל מבצעים ועדכונים מהעסק (אפשר להסיר בכל עת)</label><button class="btn block" style="margin-top:14px">' + (biz.policy.autoConfirm === false ? 'שליחת בקשה לתור' : 'אישור התור') + '</button>' + (biz.policy.autoConfirm === false ? '<p class="muted" style="margin-bottom:0">התור יהיה סופי אחרי שהעסק יאשר אותו. תקבלו אישור בוואטסאפ.</p>' : '') + '</form>';
   return h;
 }
 async function q() { return 'serviceId=' + st.svc + '&providerId=' + st.prov; }

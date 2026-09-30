@@ -25,6 +25,8 @@ function start() {
   applyBrand(biz.brand); prov = prov || biz.providers.find((p) => p.active)?.id;
   root.innerHTML = `<div class="app"><div class="tabs" id="tabs"></div><div id="view"></div></div><div id="barhost"></div>`;
   go(tab);
+  const ap = new URLSearchParams(location.search).get('approve');
+  if (ap) { history.replaceState(null, '', location.pathname); requestSheet(ap); }
 }
 function tabs(badges = {}) {
   $('#tabs').innerHTML = TABS.map(([k, n]) => `<button class="tab ${tab === k ? 'on' : ''}" data-tab="${k}">${n}${badges[k] ? `<span class="n">${badges[k]}</span>` : ''}</button>`).join('') + `<button class="tab" id="out">יציאה</button>`;
@@ -62,7 +64,8 @@ function ring(cur, alertMin) {
   <div class="mid"><div><div class="mins" style="color:${over ? 'var(--warn)' : 'inherit'}">${mins}</div><div class="muted">${over ? 'דקות מעבר ליעד' : 'דקות נשארו'}</div></div></div></div>`;
 }
 function renderToday(f, sg, pend, outN) {
-  tabs({ messages: pend + outN });
+  const reqs = f.pendingRequests || [];
+  tabs({ messages: pend + outN, today: reqs.length });
   const cur = f.current, next = f.next, upcoming = f.appts.filter((a) => ['confirmed', 'arrived', 'pending'].includes(a.status));
   for (const h of f.hints) { const k = h.type + (f.current?.id || '') + h.text; if (['ending_soon', 'overdue'].includes(h.type) && !notified[k]) { notified[k] = 1; navigator.vibrate && navigator.vibrate([120, 60, 120]); } }
   let center;
@@ -78,7 +81,7 @@ function renderToday(f, sg, pend, outN) {
   }).join('') || '<div class="muted">אין תורים ממתינים</div>';
   const done = f.appts.filter((a) => a.status === 'done').length;
   const sgHtml = sg.length ? `<h3>הצעות לאריזת היום</h3>${sg.map((s) => `<div class="card"><b>${esc(s.title)}</b><div class="muted">${esc(s.detail || '')}</div><div class="row" style="margin-top:8px"><button class="btn" data-sga="${esc(s.id)}">אישור</button><button class="btn ghost" data-sgd="${esc(s.id)}">לא עכשיו</button></div></div>`).join('')}` : '';
-  view().innerHTML = `${provPicker()}<div class="row" style="justify-content:space-between;margin-bottom:8px"><div><b>${dayName(f.dateKey)}</b><div class="muted">${f.remaining} תורים נשארו · ${done} הסתיימו</div></div><div>${f.behindMin >= 5 ? `<span class="badge warn">באיחור ${f.behindMin} דק'</span>` : '<span class="badge ok">בזמן</span>'}</div></div>${hints}${center}<div class="card"><h3>הבאים בתור</h3>${rows}</div>${sgHtml}`;
+  view().innerHTML = `${provPicker()}${reqs.length ? `<div class="card" style="border-color:var(--p)"><h3>בקשות תור חדשות (${reqs.length})</h3>${reqs.map((r) => `<div class="qrow"><div><b>${esc(r.customerName)}</b><div class="muted">${esc(r.serviceName)} · ${esc(r.when)}</div></div><button class="btn" data-req="${r.id}">לאישור</button></div>`).join('')}</div>` : ''}<div class="row" style="justify-content:space-between;margin-bottom:8px"><div><b>${dayName(f.dateKey)}</b><div class="muted">${f.remaining} תורים נשארו · ${done} הסתיימו</div></div><div>${f.behindMin >= 5 ? `<span class="badge warn">באיחור ${f.behindMin} דק'</span>` : '<span class="badge ok">בזמן</span>'}</div></div>${hints}${center}<div class="card"><h3>הבאים בתור</h3>${rows}</div>${sgHtml}`;
   bindProv(today); bindToday(f);
   // bottom bar by mode
   let bar;
@@ -102,6 +105,7 @@ function bindMisc(f) {
   document.querySelectorAll('[data-cancel]').forEach((b) => (b.onclick = async () => { if (confirm('לבטל את התור?')) { await toast(() => A(`/appts/${b.dataset.cancel}/cancel`, { method: 'POST' })); today(); } }));
   document.querySelectorAll('[data-sga]').forEach((b) => (b.onclick = async () => { await toast(() => A('/suggestions/approve?providerId=' + prov, { method: 'POST', body: { id: b.dataset.sga } })); today(); }));
   document.querySelectorAll('[data-sgd]').forEach((b) => (b.onclick = async () => { await A('/suggestions/dismiss', { method: 'POST', body: { id: b.dataset.sgd } }); today(); }));
+  document.querySelectorAll('[data-req]').forEach((b) => (b.onclick = () => requestSheet(b.dataset.req)));
   document.querySelectorAll('[data-outbox]').forEach((b) => (b.onclick = outbox));
   document.querySelectorAll('[data-walk]').forEach((b) => (b.onclick = walkin));
   document.querySelectorAll('[data-break]').forEach((b) => (b.onclick = async () => { await toast(() => A('/break', { method: 'POST', body: { providerId: prov, minutes: 15 } })); today(); }));
@@ -138,6 +142,29 @@ async function walkin() {
     $('#cl').onclick = closeModal;
     $('#wgo').onclick = async () => { await toast(async () => { await A('/walkin', { method: 'POST', body: { providerId: prov, serviceId: b.dataset.s, name: $('#wn').value, phone: $('#wp').value } }); closeModal(); today(); }); };
   }));
+}
+
+// ---------- BOOKING REQUESTS: one tap to approve and send the confirmation ----------
+const STATUS_HE = { confirmed: 'מאושר', cancelled: 'בוטל', arrived: 'הגיע', in_service: 'בטיפול', done: 'הסתיים', no_show: 'לא הגיע', pending: 'ממתין לאישור' };
+function openWa(url) { const w = window.open(url, '_blank'); if (!w) location.href = url; }
+async function requestSheet(id) {
+  let d; try { d = await A('/appts/' + id); } catch { return alert('הבקשה לא נמצאה'); }
+  const pending = d.status === 'pending';
+  modal(`<h2>בקשת תור</h2><div class="card"><b>${esc(d.customerName)}</b><div class="muted">${esc((d.phone || '').replace(/^972/, '0'))}</div><div style="margin-top:8px">${esc(d.serviceName)} · ${d.duration} דק'${d.price ? ' · ₪' + d.price : ''}</div><div class="big" style="font-size:1.4rem;margin-top:6px">${esc(d.when)}</div></div>`
+    + (pending ? `<button class="btn block" id="rq-ok">אישור ושליחת אישור ללקוח בוואטסאפ</button><div class="row" style="margin-top:8px"><button class="btn danger grow" id="rq-no">לא מתאים</button><button class="btn ghost grow" id="rq-x">סגירה</button></div><div id="rq-m"></div>` : `<div class="okmsg">סטטוס: ${STATUS_HE[d.status] || d.status}</div><button class="btn ghost block" id="rq-x">סגירה</button>`));
+  $('#rq-x').onclick = () => { closeModal(); go(tab); };
+  if (!pending) return;
+  const act = (kind, okText) => async () => {
+    $('#rq-ok').disabled = $('#rq-no').disabled = true;
+    try {
+      const r = await A(`/appts/${id}/${kind}`, { method: 'POST' });
+      if (r.wa) { await A(`/messages/${r.wa.id}/sent`, { method: 'POST' }).catch(() => {}); $('#rq-m').innerHTML = `<div class="okmsg">${okText} נפתח וואטסאפ עם ההודעה מוכנה: לחצו "שלח".</div>`; openWa(r.wa.url); }
+      else $('#rq-m').innerHTML = `<div class="okmsg">${okText} ההודעה נשלחה ללקוח ✓</div>`;
+      $('#rq-x').textContent = 'סיום';
+    } catch (e) { $('#rq-m').innerHTML = alertBox(e.message); $('#rq-ok').disabled = $('#rq-no').disabled = false; }
+  };
+  $('#rq-ok').onclick = act('approve', 'התור אושר ✓');
+  $('#rq-no').onclick = () => confirm('לדחות את הבקשה?') && act('reject', 'הבקשה נדחתה.')();
 }
 
 // ---------- OUTBOX (free WhatsApp: one tap per message) ----------
@@ -283,7 +310,7 @@ async function policy() {
   ${m.hasCredentials ? '<div class="okmsg">פרטי החיבור נשמרו ✓ (הטוקן לא מוצג שוב)</div><button class="chip" id="wclr">מחיקת פרטי חיבור</button>' : ''}
   <p class="muted">אם שליחה אוטומטית נכשלת, ההודעה חוזרת לתור השליחה הידנית, כך שאף הודעה לא הולכת לאיבוד.</p></div>
   <button class="btn block" id="msv" style="margin-top:10px">שמירה</button><div id="mres"></div></div>
-  <div class="card"><h2>מדיניות</h2>${num('leadMin', 'Lead time לקביעה (דקות)', p.leadMin)}${num('windowDays', 'חלון הזמנה קדימה (ימים)', p.windowDays)}${num('cancelHours', 'ביטול / הזזה עצמית עד (שעות לפני)', p.cancelHours)}${sel('alertMin', 'התראת סיום (דקות לפני היעד)', [5, 8, 10], p.alertMin)}${sel('gapThreshold', 'סף חור לאריזה (דקות)', [20, 25, 30, 40], p.gapThreshold)}${num('softDelayMax', 'סף עיכוב קל (עד X דקות)', p.softDelayMax)}${num('marketingMaxDays', 'שיווק: לכל היותר אחת ל־X ימים', p.marketingMaxDays, 'ניתן לשנות, אי אפשר לבטל את ה־opt-out')}<label class="check"><input type="checkbox" id="auto" ${p.autoConfirm ? 'checked' : ''}> אישור אוטומטי של תורים אונליין</label><button class="btn block" id="sv" style="margin-top:14px">שמירה</button></div>`;
+  <div class="card"><h2>מדיניות</h2>${num('leadMin', 'Lead time לקביעה (דקות)', p.leadMin)}${num('windowDays', 'חלון הזמנה קדימה (ימים)', p.windowDays)}${num('cancelHours', 'ביטול / הזזה עצמית עד (שעות לפני)', p.cancelHours)}${sel('alertMin', 'התראת סיום (דקות לפני היעד)', [5, 8, 10], p.alertMin)}${sel('gapThreshold', 'סף חור לאריזה (דקות)', [20, 25, 30, 40], p.gapThreshold)}${num('softDelayMax', 'סף עיכוב קל (עד X דקות)', p.softDelayMax)}${num('marketingMaxDays', 'שיווק: לכל היותר אחת ל־X ימים', p.marketingMaxDays, 'ניתן לשנות, אי אפשר לבטל את ה־opt-out')}<label class="check"><input type="checkbox" id="auto" ${p.autoConfirm ? 'checked' : ''}> אישור אוטומטי של תורים אונליין. אם לא מסומן, כל בקשה ממתינה לאישור שלי (מומלץ)</label><button class="btn block" id="sv" style="margin-top:14px">שמירה</button></div>`;
   document.querySelectorAll('[name=mm]').forEach((r) => (r.onchange = () => { $('#autobox').style.display = document.querySelector('[name=mm]:checked').value === 'auto' || m.hasCredentials ? 'block' : 'none'; }));
   $('#msv').onclick = async () => {
     const auto = document.querySelector('[name=mm]:checked').value === 'auto', body = { auto };

@@ -275,3 +275,74 @@ test('messaging: manual by default; auto sends with the business credentials; fa
   await put({ clear: true });
   assert.equal(s.eng.msgCfg(s.biz).auto, false);
 });
+
+test('booking request (free mode): customer gets a ready WhatsApp to the owner; approving gives the owner a ready confirmation', async () => {
+  const { createApp } = require('../lib/routes');
+  const s = setup('09:00');
+  s.biz.policy.autoConfirm = false; s.biz.contact.whatsapp = '054-692-2413';
+  s.eng.baseUrl = 'https://zrima.example';
+  const app = createApp(s.eng, {}), key = 'test-owner-key-1';
+  const a = s.book(s.gel, '12:00', 'שירה כהן', P[0]);
+  assert.equal(a.status, 'pending');
+  assert.equal(s.eng.d.messages.filter((m) => m.apptId === a.id).length, 0, 'nothing is queued for the customer yet (the screen already says "request received")');
+  // the slot is held while the request waits
+  assert.ok(!times(s, s.gel).includes('12:00'));
+  // customer screen: ready-made message to the owner with the approval link
+  const view = s.eng.myView(s.biz, a);
+  assert.match(view.ownerWa.url, /^https:\/\/wa\.me\/972546922413\?text=/);
+  const sentText = decodeURIComponent(view.ownerWa.url.split('text=')[1]);
+  assert.ok(sentText.includes(`https://zrima.example/admin?approve=${a.id}`) && sentText.includes('שירה כהן'));
+  // owner side: the request is listed, and needs the owner key
+  const list = await app({ method: 'GET', path: '/api/owner/today', authKey: key });
+  assert.equal(list.json.pendingRequests.length, 1);
+  assert.equal((await app({ method: 'GET', path: `/api/owner/appts/${a.id}`, authKey: 'wrong-key-123456' })).status, 401);
+  assert.equal((await app({ method: 'POST', path: `/api/owner/appts/${a.id}/approve`, authKey: 'wrong-key-123456' })).status, 401);
+  const det = await app({ method: 'GET', path: `/api/owner/appts/${a.id}`, authKey: key });
+  assert.equal(det.json.customerName, 'שירה כהן'); assert.equal(det.json.status, 'pending');
+  // one tap: approve -> confirmed, and a ready WhatsApp confirmation for the customer
+  const ok = await app({ method: 'POST', path: `/api/owner/appts/${a.id}/approve`, authKey: key });
+  assert.equal(ok.json.status, 'confirmed');
+  assert.match(ok.json.wa.url, /^https:\/\/wa\.me\/972501111111\?text=/);
+  assert.ok(decodeURIComponent(ok.json.wa.url).includes('אושר'));
+  assert.equal(s.eng.myView(s.biz, a).ownerWa, undefined, 'no more "ask the owner" prompt once approved');
+  assert.equal((await app({ method: 'GET', path: '/api/owner/today', authKey: key })).json.pendingRequests.length, 0);
+});
+test('booking request: rejecting frees the slot and prepares a message with a link to book again', async () => {
+  const { createApp } = require('../lib/routes');
+  const s = setup('09:00');
+  s.biz.policy.autoConfirm = false;
+  const app = createApp(s.eng, {}), key = 'test-owner-key-1';
+  const a = s.book(s.gel, '12:00', 'א', P[0]);
+  const r = await app({ method: 'POST', path: `/api/owner/appts/${a.id}/reject`, authKey: key });
+  assert.equal(r.json.status, 'cancelled');
+  assert.ok(decodeURIComponent(r.json.wa.url).includes('/b/demo'));
+  assert.ok(times(s, s.gel).includes('12:00'), 'the slot is free again');
+});
+test('booking request (automatic mode): the owner is alerted by the system, with the approval link', async () => {
+  const { createApp } = require('../lib/routes');
+  const s = setup('09:00');
+  s.biz.policy.autoConfirm = false; s.biz.contact.whatsapp = '0546922413';
+  s.eng.baseUrl = 'https://zrima.example';
+  const calls = [];
+  s.eng.transport = { send: async (to, text) => { calls.push({ to, text }); return { ok: true }; } };
+  const app = createApp(s.eng, {});
+  await app({ method: 'PUT', path: '/api/owner/messaging', authKey: 'test-owner-key-1', body: { auto: true, token: 'EAAB' + 'x'.repeat(30), phoneId: '123456789012345' } });
+  const a = s.book(s.gel, '12:00', 'שירה', P[0]);
+  await new Promise((r) => setTimeout(r, 5));
+  const toOwner = calls.find((c) => c.to === '972546922413');
+  assert.ok(toOwner, 'a WhatsApp went to the owner');
+  assert.ok(toOwner.text.includes(`https://zrima.example/admin?approve=${a.id}`) && toOwner.text.includes('שירה'));
+  assert.ok(calls.some((c) => c.to === '972501111111'), 'and the customer gets an acknowledgement');
+});
+test('free mode: no owner alert is invented; a failed automatic owner alert lands in the outbox addressed to the owner', async () => {
+  const s = setup('09:00');
+  s.biz.policy.autoConfirm = false; s.biz.contact.whatsapp = '0546922413';
+  s.book(s.gel, '12:00', 'א', P[0]);
+  assert.equal(s.eng.d.messages.length, 0);
+  Object.assign(s.eng.msgCfg(s.biz), { auto: true, wa: { token: 'x'.repeat(30), phoneId: '123456789012345' } });
+  s.eng.transport = { send: async () => ({ ok: false }) };
+  s.book(s.gel, '14:00', 'ב', P[1]);
+  await new Promise((r) => setTimeout(r, 5));
+  const item = s.eng.outbox(s.biz).find((m) => m.type === 'owner_alert');
+  assert.ok(item && item.phone === '972546922413' && item.url.startsWith('https://wa.me/972546922413'));
+});
