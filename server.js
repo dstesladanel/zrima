@@ -41,6 +41,12 @@ async function handler(req, res) {
   }
   if (p === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   if (p === '/favicon.ico') { res.writeHead(204); return res.end(); }
+  const cal = p.match(/^\/cal\/([^/]+)$/);
+  if (cal) {
+    const r = await app({ method: 'GET', path: '/api/cal/' + cal[1] });
+    res.writeHead(r.status, { 'Content-Type': r.type || 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(r.text !== undefined ? r.text : JSON.stringify(r.json));
+  }
   const page = PAGES.find(([re]) => re.test(p));
   if (page) return serveFile(res, path.join(PUB, page[1]));
   if (p === '/') { res.writeHead(302, { Location: '/admin' }); return res.end(); }

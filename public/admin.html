@@ -25,7 +25,7 @@ function start() {
   applyBrand(biz.brand); prov = prov || biz.providers.find((p) => p.active)?.id;
   root.innerHTML = `<div class="app"><div class="tabs" id="tabs"></div><div id="view"></div></div><div id="barhost"></div>`;
   go(tab);
-  const ap = new URLSearchParams(location.search).get('approve');
+  const qs = new URLSearchParams(location.search), ap = qs.get('appt') || qs.get('approve');
   if (ap) { history.replaceState(null, '', location.pathname); requestSheet(ap); }
 }
 function tabs(badges = {}) {
@@ -64,8 +64,8 @@ function ring(cur, alertMin) {
   <div class="mid"><div><div class="mins" style="color:${over ? 'var(--warn)' : 'inherit'}">${mins}</div><div class="muted">${over ? 'דקות מעבר ליעד' : 'דקות נשארו'}</div></div></div></div>`;
 }
 function renderToday(f, sg, pend, outN) {
-  const reqs = f.pendingRequests || [];
-  tabs({ messages: pend + outN, today: reqs.length });
+  const reqs = f.pendingRequests || [], nb = f.newBookings || [];
+  tabs({ messages: pend + outN, today: reqs.length + nb.length });
   const cur = f.current, next = f.next, upcoming = f.appts.filter((a) => ['confirmed', 'arrived', 'pending'].includes(a.status));
   for (const h of f.hints) { const k = h.type + (f.current?.id || '') + h.text; if (['ending_soon', 'overdue'].includes(h.type) && !notified[k]) { notified[k] = 1; navigator.vibrate && navigator.vibrate([120, 60, 120]); } }
   let center;
@@ -81,7 +81,7 @@ function renderToday(f, sg, pend, outN) {
   }).join('') || '<div class="muted">אין תורים ממתינים</div>';
   const done = f.appts.filter((a) => a.status === 'done').length;
   const sgHtml = sg.length ? `<h3>הצעות לאריזת היום</h3>${sg.map((s) => `<div class="card"><b>${esc(s.title)}</b><div class="muted">${esc(s.detail || '')}</div><div class="row" style="margin-top:8px"><button class="btn" data-sga="${esc(s.id)}">אישור</button><button class="btn ghost" data-sgd="${esc(s.id)}">לא עכשיו</button></div></div>`).join('')}` : '';
-  view().innerHTML = `${provPicker()}${reqs.length ? `<div class="card" style="border-color:var(--p)"><h3>בקשות תור חדשות (${reqs.length})</h3>${reqs.map((r) => `<div class="qrow"><div><b>${esc(r.customerName)}</b><div class="muted">${esc(r.serviceName)} · ${esc(r.when)}</div></div><button class="btn" data-req="${r.id}">לאישור</button></div>`).join('')}</div>` : ''}<div class="row" style="justify-content:space-between;margin-bottom:8px"><div><b>${dayName(f.dateKey)}</b><div class="muted">${f.remaining} תורים נשארו · ${done} הסתיימו</div></div><div>${f.behindMin >= 5 ? `<span class="badge warn">באיחור ${f.behindMin} דק'</span>` : '<span class="badge ok">בזמן</span>'}</div></div>${hints}${center}<div class="card"><h3>הבאים בתור</h3>${rows}</div>${sgHtml}`;
+  view().innerHTML = `${provPicker()}${nb.length ? `<div class="card" style="border-color:var(--p)"><h3>תורים חדשים (${nb.length})</h3>${nb.map((r) => `<div class="qrow"><div><b>${esc(r.customerName)}</b><div class="muted">${esc(r.serviceName)} · ${esc(r.when)}</div></div><button class="btn" data-req="${r.id}">ניהול</button></div>`).join('')}</div>` : ''}${reqs.length ? `<div class="card" style="border-color:var(--p)"><h3>בקשות תור חדשות (${reqs.length})</h3>${reqs.map((r) => `<div class="qrow"><div><b>${esc(r.customerName)}</b><div class="muted">${esc(r.serviceName)} · ${esc(r.when)}</div></div><button class="btn" data-req="${r.id}">לאישור</button></div>`).join('')}</div>` : ''}<div class="row" style="justify-content:space-between;margin-bottom:8px"><div><b>${dayName(f.dateKey)}</b><div class="muted">${f.remaining} תורים נשארו · ${done} הסתיימו</div></div><div>${f.behindMin >= 5 ? `<span class="badge warn">באיחור ${f.behindMin} דק'</span>` : '<span class="badge ok">בזמן</span>'}</div></div>${hints}${center}<div class="card"><h3>הבאים בתור</h3>${rows}</div>${sgHtml}`;
   bindProv(today); bindToday(f);
   // bottom bar by mode
   let bar;
@@ -120,14 +120,14 @@ function rowSheet(a) {
   $('#cl').onclick = closeModal;
   $('#sv').onclick = async () => { await toast(() => A('/appts/' + a.id, { method: 'PUT', body: { notes: $('#nt').value } })); closeModal(); today(); };
   $('#ns').onclick = async () => { await toast(() => A(`/appts/${a.id}/noshow`, { method: 'POST' })); closeModal(); today(); };
-  $('#cn').onclick = async () => { if (confirm('לבטל ולעדכן את הלקוח?')) { await toast(() => A(`/appts/${a.id}/cancel`, { method: 'POST' })); closeModal(); today(); } };
+  $('#cn').onclick = async () => { if (confirm('לבטל ולעדכן את הלקוח?')) { const r = await toast(() => A(`/appts/${a.id}/cancel`, { method: 'POST' })); closeModal(); if (r && r.wa) { await A(`/messages/${r.wa.id}/sent`, { method: 'POST' }).catch(() => {}); openWa(r.wa.url); } today(); } };
   $('#mv').onclick = () => moveSheet(a);
 }
 function moveSheet(a) {
   const d = new Date(a.start), pad = (n) => String(n).padStart(2, '0');
   modal(`<h2>הזזת תור</h2><label>תאריך ושעה חדשים (בקפיצות של רבע שעה)</label><input type="datetime-local" id="dt" value="${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}"><p class="muted">הלקוח יקבל הודעה עם השעה החדשה.</p><div class="row"><button class="btn grow" id="ok">הזז</button><button class="btn ghost grow" id="x">ביטול</button></div>`);
   $('#x').onclick = closeModal;
-  $('#ok').onclick = async () => { await toast(async () => { await A(`/appts/${a.id}/move`, { method: 'POST', body: { start: new Date($('#dt').value).getTime() } }); closeModal(); today(); }); };
+  $('#ok').onclick = async () => { await toast(async () => { const r = await A(`/appts/${a.id}/move`, { method: 'POST', body: { start: new Date($('#dt').value).getTime() } }); closeModal(); if (r.wa) { await A(`/messages/${r.wa.id}/sent`, { method: 'POST' }).catch(() => {}); openWa(r.wa.url); } go(tab); }); };
 }
 async function walkin() {
   const svcs = biz.services.filter((s) => s.active && s.walkin);
@@ -148,23 +148,33 @@ async function walkin() {
 const STATUS_HE = { confirmed: 'מאושר', cancelled: 'בוטל', arrived: 'הגיע', in_service: 'בטיפול', done: 'הסתיים', no_show: 'לא הגיע', pending: 'ממתין לאישור' };
 function openWa(url) { const w = window.open(url, '_blank'); if (!w) location.href = url; }
 async function requestSheet(id) {
-  let d; try { d = await A('/appts/' + id); } catch { return alert('הבקשה לא נמצאה'); }
-  const pending = d.status === 'pending';
-  modal(`<h2>בקשת תור</h2><div class="card"><b>${esc(d.customerName)}</b><div class="muted">${esc((d.phone || '').replace(/^972/, '0'))}</div><div style="margin-top:8px">${esc(d.serviceName)} · ${d.duration} דק'${d.price ? ' · ₪' + d.price : ''}</div><div class="big" style="font-size:1.4rem;margin-top:6px">${esc(d.when)}</div></div>`
-    + (pending ? `<button class="btn block" id="rq-ok">אישור ושליחת אישור ללקוח בוואטסאפ</button><div class="row" style="margin-top:8px"><button class="btn danger grow" id="rq-no">לא מתאים</button><button class="btn ghost grow" id="rq-x">סגירה</button></div><div id="rq-m"></div>` : `<div class="okmsg">סטטוס: ${STATUS_HE[d.status] || d.status}</div><button class="btn ghost block" id="rq-x">סגירה</button>`));
+  let d; try { d = await A('/appts/' + id); } catch { return alert('התור לא נמצא'); }
+  const pending = d.status === 'pending', live = ['confirmed', 'arrived'].includes(d.status);
+  const tel = (d.phone || '').replace(/^972/, '0');
+  modal(`<h2>${pending ? 'בקשת תור' : 'ניהול תור'}</h2><div class="card"><b>${esc(d.customerName)}</b><div class="muted">${esc(tel)}</div><div style="margin-top:8px">${esc(d.serviceName)} · ${d.duration} דק'${d.price ? ' · ₪' + d.price : ''}</div><div class="big" style="font-size:1.4rem;margin-top:6px">${esc(d.when)}</div></div>`
+    + (pending ? `<button class="btn block" id="rq-ok">אישור ושליחת אישור ללקוח בוואטסאפ</button><div class="row" style="margin-top:8px"><button class="btn danger grow" id="rq-no">לא מתאים</button><button class="btn ghost grow" id="rq-x">סגירה</button></div>`
+      : live ? `<div class="row"><button class="btn grow" id="rq-mv">הזזת התור</button><button class="btn danger grow" id="rq-cn">ביטול התור</button></div><div class="row" style="margin-top:8px"><button class="btn soft grow" id="rq-wa">הודעה ללקוח בוואטסאפ</button><button class="btn ghost grow" id="rq-x">סגירה</button></div>`
+      : `<div class="okmsg">סטטוס: ${STATUS_HE[d.status] || d.status}</div><button class="btn ghost block" id="rq-x">סגירה</button>`)
+    + '<div id="rq-m"></div>');
+  const done = () => { $('#rq-x').textContent = 'סיום'; };
+  const lock = (v) => document.querySelectorAll('#modal button').forEach((b) => { if (b.id !== 'rq-x') b.disabled = v; });
   $('#rq-x').onclick = () => { closeModal(); go(tab); };
-  if (!pending) return;
-  const act = (kind, okText) => async () => {
-    $('#rq-ok').disabled = $('#rq-no').disabled = true;
+  // runs an action; if it prepared a WhatsApp message for the customer, open it ready to send
+  const act = (kind, okText, body) => async () => {
+    lock(true);
     try {
-      const r = await A(`/appts/${id}/${kind}`, { method: 'POST' });
+      const r = await A(`/appts/${id}/${kind}`, { method: 'POST', body });
       if (r.wa) { await A(`/messages/${r.wa.id}/sent`, { method: 'POST' }).catch(() => {}); $('#rq-m').innerHTML = `<div class="okmsg">${okText} נפתח וואטסאפ עם ההודעה מוכנה: לחצו "שלח".</div>`; openWa(r.wa.url); }
       else $('#rq-m').innerHTML = `<div class="okmsg">${okText} ההודעה נשלחה ללקוח ✓</div>`;
-      $('#rq-x').textContent = 'סיום';
-    } catch (e) { $('#rq-m').innerHTML = alertBox(e.message); $('#rq-ok').disabled = $('#rq-no').disabled = false; }
+      done();
+    } catch (e) { $('#rq-m').innerHTML = alertBox(e.message); lock(false); }
   };
-  $('#rq-ok').onclick = act('approve', 'התור אושר ✓');
-  $('#rq-no').onclick = () => confirm('לדחות את הבקשה?') && act('reject', 'הבקשה נדחתה.')();
+  if (pending) { $('#rq-ok').onclick = act('approve', 'התור אושר ✓'); $('#rq-no').onclick = () => confirm('לדחות את הבקשה?') && act('reject', 'הבקשה נדחתה.')(); }
+  if (live) {
+    $('#rq-cn').onclick = () => confirm('לבטל את התור ולעדכן את הלקוח?') && act('cancel', 'התור בוטל.')();
+    $('#rq-mv').onclick = () => moveSheet({ id, start: d.start });
+    $('#rq-wa').onclick = () => openWa('https://wa.me/' + d.phone);
+  }
 }
 
 // ---------- OUTBOX (free WhatsApp: one tap per message) ----------
@@ -297,7 +307,8 @@ async function brand() {
 
 // ---------- POLICY ----------
 async function policy() {
-  biz = await A('/me'); const p = biz.policy, m = biz.messaging || {};
+  biz = await A('/me'); const p = biz.policy, m = biz.messaging || {}, al = m.ownerAlert || {}, cal = await A('/calendar');
+  const calUrl = `${location.origin}/cal/${cal.token}.ics`, webcal = calUrl.replace(/^https?:/, 'webcal:');
   const num = (id, label, v, hint = '') => `<div><label>${label}</label><input type="number" id="${id}" value="${v}">${hint ? `<div class="muted">${hint}</div>` : ''}</div>`;
   const sel = (id, label, opts, v) => `<div><label>${label}</label><select id="${id}">${opts.map((o) => `<option ${o == v ? 'selected' : ''}>${o}</option>`).join('')}</select></div>`;
   view().innerHTML = `<div class="card"><h2>שליחת הודעות ללקוחות</h2>
@@ -310,7 +321,27 @@ async function policy() {
   ${m.hasCredentials ? '<div class="okmsg">פרטי החיבור נשמרו ✓ (הטוקן לא מוצג שוב)</div><button class="chip" id="wclr">מחיקת פרטי חיבור</button>' : ''}
   <p class="muted">אם שליחה אוטומטית נכשלת, ההודעה חוזרת לתור השליחה הידנית, כך שאף הודעה לא הולכת לאיבוד.</p></div>
   <button class="btn block" id="msv" style="margin-top:10px">שמירה</button><div id="mres"></div></div>
+  <div class="card"><h2>התראה על כל תור חדש</h2>
+  <p class="muted">כל תור חדש שלקוח קובע מופיע מיד בלשונית "היום", בכרטיס "תורים חדשים", ואפשר משם להזיז או לבטל. אפשר לקבל גם הודעה בוואטסאפ:</p>
+  <div class="okmsg" style="${al.channel ? '' : 'background:#f3f4f6;color:var(--ink)'}">${al.channel === 'cloud' ? 'פעיל: הודעה אוטומטית דרך WhatsApp API' : al.channel === 'callmebot' ? 'פעיל: הודעה אוטומטית דרך CallMeBot' : 'כרגע: ההתראה מופיעה רק באפליקציה'}</div>
+  <h3 style="margin-top:12px">הודעה אוטומטית בחינם (CallMeBot)</h3>
+  <p class="muted">שירות צד שלישי, לא רשמי של וואטסאפ. אחרי הרשמה חד־פעמית באתר השירות (callmebot.com) מקבלים מפתח. ההודעות (שם הלקוח, הטיפול והשעה) עוברות דרך השירות הזה. אפשר גם להשתמש ב־WhatsApp API שלמעלה במקומו.</p>
+  <label>מספר הוואטסאפ שלך</label><input id="al-phone" inputmode="tel" value="${esc(((al.callmebot || {}).phone || '').replace(/^972/, '0'))}" style="direction:ltr" placeholder="054-0000000">
+  <label>מפתח מהשירות</label><input id="al-key" type="password" autocomplete="off" placeholder="${(al.callmebot || {}).configured ? 'נשמר. השאירו ריק כדי לא לשנות' : ''}" style="direction:ltr">
+  <div class="row" style="margin-top:10px"><button class="btn grow" id="al-sv">שמירה</button><button class="btn ghost grow" id="al-test" ${al.channel ? '' : 'disabled'}>הודעת בדיקה</button>${(al.callmebot || {}).configured ? '<button class="chip" id="al-clr">מחיקה</button>' : ''}</div><div id="al-res"></div></div>
+  <div class="card"><h2>סנכרון יומן בטלפון</h2>
+  <p class="muted">מוסיפים פעם אחת, ואחר כך כל התורים מתעדכנים ביומן של הטלפון לבד. היומן הוא לקריאה בלבד: הזזה וביטול נעשים במערכת.</p>
+  <div class="row"><a class="btn grow" style="text-align:center;text-decoration:none" href="${esc(webcal)}">הוספה ליומן באייפון</a><button class="btn ghost grow" id="cal-copy">העתקת קישור</button></div>
+  <input readonly id="cal-url" value="${esc(calUrl)}" onclick="this.select()" style="direction:ltr;margin-top:8px">
+  <details style="margin-top:8px"><summary>איך מוסיפים ב־Google Calendar / אנדרואיד</summary><p class="muted">ב־Google Calendar באתר (לא באפליקציה): הוספת יומן ← מכתובת URL ← הדביקו את הקישור. אחרי זה היומן מופיע גם באפליקציה בטלפון.</p></details>
+  <p class="muted">העדכון לא מיידי: באייפון בדרך כלל תוך דקות עד שעה לפי הגדרות היומן, ובגוגל יכול לקחת כמה שעות.</p>
+  <p class="muted">הקישור מכיל את שמות הלקוחות והטלפונים, אז אל תשתפו אותו. אם הוא הגיע למי שלא צריך, אפשר <button class="chip" id="cal-rot">לאפס את הקישור</button> (הקישור הישן יפסיק לעבוד ויהיה צריך להוסיף את החדש).</p></div>
   <div class="card"><h2>מדיניות</h2>${num('leadMin', 'Lead time לקביעה (דקות)', p.leadMin)}${num('windowDays', 'חלון הזמנה קדימה (ימים)', p.windowDays)}${num('cancelHours', 'ביטול / הזזה עצמית עד (שעות לפני)', p.cancelHours)}${sel('alertMin', 'התראת סיום (דקות לפני היעד)', [5, 8, 10], p.alertMin)}${sel('gapThreshold', 'סף חור לאריזה (דקות)', [20, 25, 30, 40], p.gapThreshold)}${num('softDelayMax', 'סף עיכוב קל (עד X דקות)', p.softDelayMax)}${num('marketingMaxDays', 'שיווק: לכל היותר אחת ל־X ימים', p.marketingMaxDays, 'ניתן לשנות, אי אפשר לבטל את ה־opt-out')}<label class="check"><input type="checkbox" id="auto" ${p.autoConfirm ? 'checked' : ''}> אישור אוטומטי של תורים אונליין. אם לא מסומן, כל בקשה ממתינה לאישור שלי (מומלץ)</label><button class="btn block" id="sv" style="margin-top:14px">שמירה</button></div>`;
+  $('#al-sv').onclick = async () => { try { await A('/alerts', { method: 'PUT', body: { phone: $('#al-phone').value, apiKey: $('#al-key').value.trim() || undefined } }); policy(); } catch (e) { $('#al-res').innerHTML = alertBox(e.message); } };
+  $('#al-test').onclick = async () => { try { const r = await A('/alerts/test', { method: 'POST' }); $('#al-res').innerHTML = `<div class="okmsg">נשלחה הודעת בדיקה (${r.channel === 'cloud' ? 'WhatsApp API' : 'CallMeBot'}). בדקו שהיא הגיעה.</div>`; } catch (e) { $('#al-res').innerHTML = alertBox(e.message); } };
+  const alc = $('#al-clr'); if (alc) alc.onclick = async () => { if (confirm('למחוק את פרטי ההתראות?')) { await A('/alerts', { method: 'PUT', body: { clear: true } }); policy(); } };
+  $('#cal-copy').onclick = async () => { try { await navigator.clipboard.writeText(calUrl); $('#cal-copy').textContent = 'הועתק ✓'; } catch { $('#cal-url').select(); } };
+  $('#cal-rot').onclick = async () => { if (confirm('לאפס את קישור היומן? הקישור הישן יפסיק לעבוד.')) { await A('/calendar/rotate', { method: 'POST' }); policy(); } };
   document.querySelectorAll('[name=mm]').forEach((r) => (r.onchange = () => { $('#autobox').style.display = document.querySelector('[name=mm]:checked').value === 'auto' || m.hasCredentials ? 'block' : 'none'; }));
   $('#msv').onclick = async () => {
     const auto = document.querySelector('[name=mm]:checked').value === 'auto', body = { auto };

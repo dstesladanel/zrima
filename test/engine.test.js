@@ -257,7 +257,7 @@ test('messaging: manual by default; auto sends with the business credentials; fa
   assert.equal((await put({ auto: true })).status, 400);
   assert.equal((await put({ auto: true, token: 'x'.repeat(30), phoneId: 'abc' })).status, 400);
   const r = await put({ auto: true, token: 'EAAB' + 'x'.repeat(30), phoneId: '123456789012345' });
-  assert.equal(r.status, 200); assert.deepEqual(r.json, { auto: true, hasCredentials: true, phoneId: '123456789012345' });
+  assert.equal(r.status, 200); assert.equal(r.json.auto, true); assert.equal(r.json.hasCredentials, true); assert.equal(r.json.phoneId, '123456789012345');
   const me = JSON.stringify((await app({ method: 'GET', path: '/api/owner/me', authKey: 'test-owner-key-1' })).json);
   assert.ok(!me.includes('EAAB'), 'the token is never returned to the browser');
   // auto: the next message is sent with this business's credentials
@@ -291,7 +291,7 @@ test('booking request (free mode): customer gets a ready WhatsApp to the owner; 
   const view = s.eng.myView(s.biz, a);
   assert.match(view.ownerWa.url, /^https:\/\/wa\.me\/972546922413\?text=/);
   const sentText = decodeURIComponent(view.ownerWa.url.split('text=')[1]);
-  assert.ok(sentText.includes(`https://zrima.example/admin?approve=${a.id}`) && sentText.includes('שירה כהן'));
+  assert.ok(sentText.includes(`https://zrima.example/admin?appt=${a.id}`) && sentText.includes('שירה כהן'));
   // owner side: the request is listed, and needs the owner key
   const list = await app({ method: 'GET', path: '/api/owner/today', authKey: key });
   assert.equal(list.json.pendingRequests.length, 1);
@@ -331,7 +331,7 @@ test('booking request (automatic mode): the owner is alerted by the system, with
   await new Promise((r) => setTimeout(r, 5));
   const toOwner = calls.find((c) => c.to === '972546922413');
   assert.ok(toOwner, 'a WhatsApp went to the owner');
-  assert.ok(toOwner.text.includes(`https://zrima.example/admin?approve=${a.id}`) && toOwner.text.includes('שירה'));
+  assert.ok(toOwner.text.includes(`https://zrima.example/admin?appt=${a.id}`) && toOwner.text.includes('שירה'));
   assert.ok(calls.some((c) => c.to === '972501111111'), 'and the customer gets an acknowledgement');
 });
 test('free mode: no owner alert is invented; a failed automatic owner alert lands in the outbox addressed to the owner', async () => {
@@ -345,4 +345,74 @@ test('free mode: no owner alert is invented; a failed automatic owner alert land
   await new Promise((r) => setTimeout(r, 5));
   const item = s.eng.outbox(s.biz).find((m) => m.type === 'owner_alert');
   assert.ok(item && item.phone === '972546922413' && item.url.startsWith('https://wa.me/972546922413'));
+});
+
+test('owner is alerted about every new online booking, with a link to move or cancel it', async () => {
+  const s = setup('09:00');
+  s.biz.contact.whatsapp = '0546922413'; s.eng.baseUrl = 'https://zrima.example';
+  const cm = [];
+  s.eng.transport = { send: async () => ({ ok: true }), callMeBot: async (phone, text, key) => { cm.push({ phone, text, key }); return { ok: true }; } };
+  // no channel configured: nothing is sent, but the booking shows in the app as new
+  const a = s.book(s.gel, '12:00', 'שירה כהן', P[0]);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(cm.length, 0);
+  assert.equal(s.eng.newBookings(s.biz).length, 1);
+  // free automatic channel
+  s.eng.msgCfg(s.biz).ownerAlert.callmebot = { phone: '972546922413', apiKey: 'abc12345' };
+  const b = s.book(s.gel, '14:00', 'דנה', P[1]);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(cm.length, 1);
+  assert.equal(cm[0].phone, '972546922413'); assert.equal(cm[0].key, 'abc12345');
+  assert.ok(cm[0].text.includes('תור חדש') && cm[0].text.includes('דנה') && cm[0].text.includes(`https://zrima.example/admin?appt=${b.id}`));
+  assert.equal(s.eng.d.messages.find((m) => m.type === 'owner_alert').status, 'sent');
+  // manual bookings by the owner herself do not alert her
+  s.eng.book(s.biz, { serviceId: s.gel.id, providerId: s.prov, start: s.at('16:00'), name: 'ג', phone: P[2], source: 'manual' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(cm.length, 1);
+  // a customer cancelling tells the owner too
+  a.freeChange = true; s.eng.customerCancel(a);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(cm.length, 2); assert.ok(cm[1].text.includes('בוטל'));
+  // a failing gateway is recorded, never thrown
+  s.eng.transport.callMeBot = async () => ({ ok: false });
+  s.book(s.gel, '10:00', 'ד', P[3]);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(s.eng.d.messages.filter((m) => m.type === 'owner_alert').at(-1).status, 'failed');
+});
+test('owner can move or cancel a booking and gets a ready WhatsApp for the customer; opening it marks it seen', async () => {
+  const { createApp } = require('../lib/routes');
+  const s = setup('09:00'), app = createApp(s.eng, {}), key = 'test-owner-key-1';
+  const a = s.book(s.gel, '12:00', 'שירה', P[0]);
+  assert.equal(s.eng.newBookings(s.biz).length, 1);
+  assert.equal((await app({ method: 'GET', path: `/api/owner/appts/${a.id}`, authKey: key })).status, 200);
+  assert.equal(s.eng.newBookings(s.biz).length, 0, 'viewing it counts as seen');
+  const mv = await app({ method: 'POST', path: `/api/owner/appts/${a.id}/move`, authKey: key, body: { start: s.at('15:00') } });
+  assert.equal(mv.status, 200); assert.equal(a.start, s.at('15:00'));
+  assert.match(mv.json.wa.url, /^https:\/\/wa\.me\/972501111111\?text=/);
+  const cn = await app({ method: 'POST', path: `/api/owner/appts/${a.id}/cancel`, authKey: key });
+  assert.equal(cn.json.status, 'cancelled'); assert.ok(cn.json.wa.url.includes('wa.me/972501111111'));
+  assert.equal((await app({ method: 'POST', path: `/api/owner/appts/${a.id}/cancel`, authKey: 'wrong-key-123456' })).status, 401);
+});
+test('calendar feed: valid iCalendar with the bookings, secret link, can be rotated', async () => {
+  const { createApp } = require('../lib/routes');
+  const s = setup('09:00'), app = createApp(s.eng, {}), key = 'test-owner-key-1';
+  s.biz.contact.address = 'טורקיז 3, חריש'; s.eng.baseUrl = 'https://zrima.example';
+  const a = s.book(s.gel, '12:00', 'שירה, כהן', P[0]);
+  const c = s.book(s.gel, '14:00', 'דנה', P[1]); s.eng.cancel(s.biz, c.id);
+  const { json: { token } } = await app({ method: 'GET', path: '/api/owner/calendar', authKey: key });
+  const r = await app({ method: 'GET', path: `/api/cal/${token}.ics` });
+  assert.equal(r.status, 200); assert.match(r.type, /text\/calendar/);
+  const ics = r.text;
+  assert.ok(ics.startsWith('BEGIN:VCALENDAR\r\n') && ics.endsWith('END:VCALENDAR\r\n'));
+  assert.ok(ics.includes(`UID:${a.id}@zrima`) && ics.includes('STATUS:CONFIRMED') && ics.includes('STATUS:CANCELLED'));
+  assert.ok(ics.includes('LOCATION:טורקיז 3\\, חריש'), 'commas are escaped');
+  assert.ok(ics.includes('DTSTART:' + new Date(s.at('12:00')).toISOString().replace(/[-:]|\.\d+/g, '')));
+  const unfolded = ics.replace(/\r\n /g, '');
+  assert.ok(unfolded.includes('SUMMARY:שירה\\, כהן'));
+  for (const line of ics.split('\r\n')) assert.ok(new TextEncoder().encode(line).length <= 75, 'folded to 75 octets: ' + line);
+  assert.equal((await app({ method: 'GET', path: '/api/cal/not-a-token.ics' })).status, 404);
+  const rot = await app({ method: 'POST', path: '/api/owner/calendar/rotate', authKey: key });
+  assert.notEqual(rot.json.token, token);
+  assert.equal((await app({ method: 'GET', path: `/api/cal/${token}.ics` })).status, 404, 'the old link stops working');
+  assert.equal((await app({ method: 'GET', path: '/api/owner/calendar', authKey: 'wrong-key-123456' })).status, 401);
 });

@@ -34,6 +34,7 @@ export class App extends DurableObject {
       ip: request.headers.get('cf-connecting-ip') || '', authKey: (request.headers.get('authorization') || '').replace(/^Bearer /, ''),
     });
     this.store.flush();
+    if (r.text !== undefined) return new Response(r.text, { status: r.status, headers: { 'Content-Type': r.type, 'Cache-Control': 'no-store' } });
     return reply(r.status, r.json);
   }
 }
@@ -45,6 +46,8 @@ export default {
     const url = new URL(request.url), p = url.pathname;
     if (p.startsWith('/api/')) return hub(env).fetch(request);
     if (p === '/healthz') return new Response('ok');
+    const cal = p.match(/^\/cal\/([^/]+)$/);
+    if (cal) return hub(env).fetch(new Request(url.origin + '/api/cal/' + cal[1], { headers: request.headers }));
     if (p === '/favicon.ico') return new Response(null, { status: 204 });
     if (p === '/') return Response.redirect(url.origin + '/admin', 302);
     const page = PAGES.find(([re]) => re.test(p));
