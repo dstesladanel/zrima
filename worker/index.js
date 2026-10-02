@@ -6,7 +6,7 @@ import { createApp } from '../lib/routes.js';
 import { bootstrap } from '../lib/bootstrap.js';
 import { SqlStore } from './store.js';
 
-const PAGES = [[/^\/b\/[^/]+$/, '/booking.html'], [/^\/t\/[^/]+$/, '/my.html'], [/^\/live\/[^/]+$/, '/live.html'], [/^\/w\/[^/]+$/, '/wait.html'], [/^\/o\/[^/]+$/, '/optout.html'], [/^\/admin\/?$/, '/admin.html']];
+const PAGES = [[/^\/b\/[^/]+$/, '/booking.html'], [/^\/t\/[^/]+$/, '/my.html'], [/^\/live\/[^/]+$/, '/live.html'], [/^\/w\/[^/]+$/, '/wait.html'], [/^\/o\/[^/]+$/, '/optout.html'], [/^\/admin\/?$/, '/admin.html'], [/^\/platform\/?$/, '/platform.html']];
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
 const reply = (status, obj) => new Response(JSON.stringify(obj), { status, headers: JSON_HEADERS });
 

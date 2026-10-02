@@ -15,7 +15,7 @@ const eng = new Engine(db, { baseUrl: BASE });
 const app = createApp(eng, process.env);
 const PUB = path.join(__dirname, 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
-const PAGES = [[/^\/b\/[^/]+$/, 'booking.html'], [/^\/t\/[^/]+$/, 'my.html'], [/^\/live\/[^/]+$/, 'live.html'], [/^\/w\/[^/]+$/, 'wait.html'], [/^\/o\/[^/]+$/, 'optout.html'], [/^\/admin\/?$/, 'admin.html']];
+const PAGES = [[/^\/b\/[^/]+$/, 'booking.html'], [/^\/t\/[^/]+$/, 'my.html'], [/^\/live\/[^/]+$/, 'live.html'], [/^\/w\/[^/]+$/, 'wait.html'], [/^\/o\/[^/]+$/, 'optout.html'], [/^\/admin\/?$/, 'admin.html'], [/^\/platform\/?$/, 'platform.html']];
 
 function readBody(req) {
   return new Promise((res, rej) => {

@@ -9,7 +9,7 @@
     "binding": "ASSETS",
     "html_handling": "none",
     "not_found_handling": "none",
-    "run_worker_first": ["/api/*", "/b/*", "/t/*", "/live/*", "/w/*", "/o/*", "/cal/*", "/admin", "/admin/", "/healthz", "/"]
+    "run_worker_first": ["/api/*", "/b/*", "/t/*", "/live/*", "/w/*", "/o/*", "/cal/*", "/admin", "/admin/", "/platform", "/platform/", "/healthz", "/"]
   },
   "durable_objects": { "bindings": [{ "name": "APP", "class_name": "App" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["App"] }],

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<link rel="stylesheet" href="/style.css"><title>זרימה · ניהול כללי</title></head>
+<body><div id="root"></div><div id="modal"></div>
+<script src="/app.js"></script>
+<script>
+// General (platform) admin: all businesses in one place. Signed in with the platform MASTER_KEY, kept only for this browser tab.
+let KEY = ''; try { KEY = sessionStorage.getItem('zmk') || ''; } catch {}
+const root = $('#root'), origin = location.origin;
+const P = (path, o = {}) => api('/api/admin' + path, { ...o, key: KEY });
+const fmtDate = (ms) => (ms ? new Date(ms).toLocaleDateString('he-IL') : '—');
+const err = (m) => `<div class="err">${esc(m)}</div>`;
+
+function login(msg) {
+  root.innerHTML = `<div class="wrap"><div class="card" style="margin-top:12vh"><h1>ניהול כללי</h1><p class="muted">כניסה עם מפתח ניהול-על (MASTER_KEY). זה לא מפתח של עסק.</p>${msg ? err(msg) : ''}
+  <label>מפתח ניהול-על</label><input id="k" type="password" autocomplete="off"><button class="btn block" id="go" style="margin-top:14px">כניסה</button></div></div>`;
+  $('#go').onclick = async () => {
+    KEY = $('#k').value.trim();
+    if (!/^[\x21-\x7e]+$/.test(KEY)) return login('המפתח מכיל אותיות בעברית או רווחים. החליפו את שפת המקלדת לאנגלית.');
+    try { await P('/businesses'); try { sessionStorage.setItem('zmk', KEY); } catch {} list(); } catch (e) { login(e.status === 401 ? 'מפתח לא נכון' : e.message); }
+  };
+  $('#k').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#go').click(); });
+}
+function modal(html) { $('#modal').innerHTML = `<div class="modal" id="mm"><div class="sheet">${html}</div></div>`; $('#mm').onclick = (e) => { if (e.target.id === 'mm') close(); }; }
+function close() { $('#modal').innerHTML = ''; }
+const copy = (text, btn) => navigator.clipboard.writeText(text).then(() => { btn.textContent = 'הועתק ✓'; }).catch(() => {});
+
+async function list() {
+  let rows;
+  try { rows = await P('/businesses'); } catch (e) { return e.status === 401 ? login('המפתח לא תקין') : (root.innerHTML = `<div class="wrap">${err(e.message)}</div>`); }
+  root.innerHTML = `<div class="wrap wide"><div class="row" style="justify-content:space-between;margin:16px 0"><div><h1 style="margin:0">ניהול כללי</h1><div class="muted">${rows.length} עסקים</div></div><div class="row"><button class="btn" id="new">+ עסק חדש</button><button class="chip" id="out">יציאה</button></div></div>
+  ${rows.map((b) => `<div class="card" data-slug="${esc(b.slug)}"><div class="row" style="justify-content:space-between"><div><h2 style="margin:0">${esc(b.name)}</h2><div class="muted" dir="ltr" style="text-align:right">/${esc(b.slug)} · נוצר ${fmtDate(b.createdAt)}</div></div>
+    <div class="row"><span class="badge ${b.upcoming ? 'ok' : ''}">${b.upcoming} תורים קרובים</span>${b.pending ? `<span class="badge warn">${b.pending} ממתינים לאישור</span>` : ''}</div></div>
+    <div class="muted" style="margin:10px 0">${b.customers} לקוחות · ${b.services} שירותים פעילים · ${b.last30} טיפולים ב־30 הימים האחרונים · הזמנה אחרונה ${fmtDate(b.lastBookingAt)}<br>התראה על תור חדש: ${b.ownerAlert === 'cloud' ? 'WhatsApp API' : b.ownerAlert === 'callmebot' ? 'CallMeBot' : 'באפליקציה בלבד'}${b.whatsappAuto ? ' · שליחה אוטומטית ללקוחות' : ''}</div>
+    <div class="row"><a class="chip" target="_blank" rel="noopener" href="/b/${esc(b.slug)}">עמוד הזמנה</a><a class="chip" target="_blank" rel="noopener" href="/live/${esc(b.slug)}">לוח חי</a><a class="chip" target="_blank" rel="noopener" href="/admin">כניסה לניהול העסק</a><button class="chip" data-copy="${esc(origin + '/b/' + b.slug)}">העתקת קישור הזמנה</button></div>
+    <div class="row" style="margin-top:8px"><button class="btn ghost" data-key="${esc(b.slug)}">מפתח כניסה חדש</button><button class="btn ghost" data-setup="${esc(b.slug)}">טעינת הגדרות (JSON)</button></div></div>`).join('') || '<div class="card muted">עוד אין עסקים</div>'}
+  <div class="foot">המסך הזה מציג מספרים בלבד, בלי שמות או טלפונים של לקוחות.</div></div>`;
+  $('#new').onclick = createForm;
+  $('#out').onclick = () => { try { sessionStorage.removeItem('zmk'); } catch {} KEY = ''; login(); };
+  document.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copy(b.dataset.copy, b)));
+  document.querySelectorAll('[data-key]').forEach((b) => (b.onclick = () => resetKey(b.dataset.key, rows.find((r) => r.slug === b.dataset.key).name)));
+  document.querySelectorAll('[data-setup]').forEach((b) => (b.onclick = () => setupForm(b.dataset.setup)));
+}
+
+function keyCard(slug, name, key, created) {
+  const msg = `שלום, ${created ? 'העסק שלך במערכת זרימה מוכן' : 'זה מפתח הכניסה החדש שלך למערכת זרימה'}.\nכניסה לניהול: ${origin}/admin\nמפתח כניסה: ${key}\n${created ? `עמוד הזמנה ללקוחות: ${origin}/b/${slug}\nלוח חי: ${origin}/live/${slug}\n` : ''}שמרו את המפתח במקום בטוח.`;
+  modal(`<h2>${created ? 'העסק נוצר ✓' : 'מפתח כניסה חדש'}</h2><p class="muted">${esc(name)}. <b>המפתח מוצג פעם אחת בלבד.</b> שמרו אותו או שלחו אותו לבעלת העסק עכשיו.${created ? '' : ' המפתח הקודם הפסיק לעבוד.'}</p>
+  <div class="card" style="text-align:center"><div class="big" style="font-size:1.3rem;word-break:break-all;direction:ltr">${esc(key)}</div></div>
+  <div class="row"><button class="btn grow" id="c1">העתקת המפתח</button><button class="btn soft grow" id="c2">העתקת הודעה למסירה</button></div>
+  <pre style="white-space:pre-wrap;background:#f3f4f6;padding:10px;border-radius:12px;margin-top:10px;font-family:inherit">${esc(msg)}</pre>
+  <button class="btn ghost block" id="x">סיום</button>`);
+  $('#c1').onclick = (e) => copy(key, e.target); $('#c2').onclick = (e) => copy(msg, e.target); $('#x').onclick = () => { close(); list(); };
+}
+
+function createForm() {
+  modal(`<h2>עסק חדש</h2><label>כתובת קצרה באנגלית (אותיות קטנות, מספרים ומקף)</label><input id="slug" dir="ltr" placeholder="noa"><div class="muted">העמוד יהיה ${esc(origin)}/b/<b id="sp">noa</b></div>
+  <label>שם העסק</label><input id="nm">
+  <label>הגדרות מוכנות (JSON, לא חובה)</label><textarea id="js" rows="4" dir="ltr" placeholder='הדביקו תוכן של קובץ כמו examples/daniela.json'></textarea><div id="res"></div>
+  <div class="row" style="margin-top:12px"><button class="btn grow" id="ok">יצירה</button><button class="btn ghost grow" id="x">ביטול</button></div>`);
+  $('#slug').oninput = () => { $('#sp').textContent = $('#slug').value || 'noa'; };
+  $('#x').onclick = close;
+  $('#ok').onclick = async () => {
+    const slug = $('#slug').value.trim().toLowerCase(), name = $('#nm').value.trim(); let setup;
+    if ($('#js').value.trim()) { try { setup = JSON.parse($('#js').value); } catch { return ($('#res').innerHTML = err('ה־JSON לא תקין')); } }
+    if (setup && setup.slug) delete setup.slug;
+    try { const r = await P('/businesses', { method: 'POST', body: { slug, name, setup } }); keyCard(r.slug, name || slug, r.ownerKey, true); }
+    catch (e) { $('#res').innerHTML = err(e.message); }
+  };
+}
+function resetKey(slug, name) {
+  modal(`<h2>מפתח כניסה חדש</h2><p>לעסק <b>${esc(name)}</b> ייווצר מפתח חדש, <b>והמפתח הנוכחי יפסיק לעבוד</b>. מי שמחוברת כבר באפליקציה תתבקש להיכנס שוב.</p><div id="res"></div><div class="row"><button class="btn danger grow" id="ok">כן, ליצור מפתח חדש</button><button class="btn ghost grow" id="x">ביטול</button></div>`);
+  $('#x').onclick = close;
+  $('#ok').onclick = async () => { try { const r = await P(`/businesses/${slug}/owner-key`, { method: 'POST', body: {} }); keyCard(slug, name, r.ownerKey, false); } catch (e) { $('#res').innerHTML = err(e.message); } };
+}
+function setupForm(slug) {
+  modal(`<h2>טעינת הגדרות</h2><p class="muted">מדביקים הגדרות מוכנות (שירותים, שעות, מותג, פרטי קשר). שירות עם אותו שם מתעדכן, שירות חדש נוסף. מפתח הכניסה לא משתנה.</p><textarea id="js" rows="8" dir="ltr"></textarea><div id="res"></div><div class="row" style="margin-top:12px"><button class="btn grow" id="ok">טעינה</button><button class="btn ghost grow" id="x">סגירה</button></div>`);
+  $('#x').onclick = close;
+  $('#ok').onclick = async () => {
+    let setup; try { setup = JSON.parse($('#js').value); } catch { return ($('#res').innerHTML = err('ה־JSON לא תקין')); }
+    delete setup.slug;
+    try { const r = await P(`/businesses/${slug}/setup`, { method: 'POST', body: setup }); $('#res').innerHTML = `<div class="okmsg">נטען ✓ · שירותים: ${r.services.added} חדשים, ${r.services.updated} עודכנו</div>`; }
+    catch (e) { $('#res').innerHTML = err(e.message); }
+  };
+}
+if (KEY) list(); else login();
+</script></body></html>

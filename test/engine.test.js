@@ -416,3 +416,43 @@ test('calendar feed: valid iCalendar with the bookings, secret link, can be rota
   assert.equal((await app({ method: 'GET', path: `/api/cal/${token}.ics` })).status, 404, 'the old link stops working');
   assert.equal((await app({ method: 'GET', path: '/api/owner/calendar', authKey: 'wrong-key-123456' })).status, 401);
 });
+
+test('platform admin: overview lists businesses with numbers only; generated keys work and are shown once', async () => {
+  const { createApp } = require('../lib/routes');
+  const s = setup('09:00'), MK = 'master-secret-1';
+  const app = createApp(s.eng, { MASTER_KEY: MK });
+  const call = (method, path, body, key = MK) => app({ method, path, body: body || {}, authKey: key, ip: '1.1.1.1' });
+  s.book(s.gel, '12:00', 'שירה כהן', P[0]);
+  Object.assign(s.eng.msgCfg(s.biz), { auto: true, wa: { token: 'EAAB' + 'y'.repeat(30), phoneId: '123456789012345' } });
+  assert.equal((await call('GET', '/api/admin/businesses', null, 'wrong-key-123456')).status, 401);
+  assert.equal((await call('GET', '/api/admin/businesses', null, 'test-owner-key-1')).status, 401, 'an owner key is not a master key');
+  const list = await call('GET', '/api/admin/businesses');
+  assert.equal(list.status, 200); assert.equal(list.json.length, 1);
+  const row = list.json[0];
+  assert.equal(row.slug, 'demo'); assert.equal(row.customers, 1); assert.equal(row.services, 2); assert.ok(row.lastBookingAt);
+  const dump = JSON.stringify(list.json);
+  for (const secret of ['EAAB', 'ownerKeyHash', 'salt', 'calToken', 'שירה', P[0], '972501111111']) assert.ok(!dump.includes(secret), 'no secrets or personal data: ' + secret);
+  // create without a key -> a strong ASCII key is generated and returned once; it logs in
+  const made = await call('POST', '/api/admin/businesses', { slug: 'noa', name: 'נועה', setup: { services: [{ name: 'לק', duration: 45, price: 100 }] } });
+  assert.equal(made.status, 200); assert.match(made.json.ownerKey, /^[\x21-\x7e]{12,}$/);
+  assert.equal(s.eng.bizByKey(made.json.ownerKey).slug, 'noa');
+  // a supplied key is never echoed back
+  const own = await call('POST', '/api/admin/businesses', { slug: 'dana', name: 'דנה', ownerKey: 'my-own-chosen-key-1' });
+  assert.equal(own.json.ownerKey, undefined); assert.equal(s.eng.bizByKey('my-own-chosen-key-1').slug, 'dana');
+  // creation is all-or-nothing: a bad setup leaves no half-made business
+  const bad = await call('POST', '/api/admin/businesses', { slug: 'bad', name: 'x', setup: { hours: { 0: [{ open: '18:00', close: '09:00' }] } } });
+  assert.equal(bad.status, 400); assert.ok(!s.eng.d.businesses.some((b) => b.slug === 'bad'));
+  assert.equal((await call('POST', '/api/admin/businesses', { slug: 'noa', name: 'again' })).status, 409);
+  // new key without typing one
+  const old = made.json.ownerKey, re = await call('POST', '/api/admin/businesses/noa/owner-key');
+  assert.equal(re.status, 200); assert.notEqual(re.json.ownerKey, old);
+  assert.equal(s.eng.bizByKey(old), null); assert.equal(s.eng.bizByKey(re.json.ownerKey).slug, 'noa');
+});
+test('repeated wrong keys from one address are throttled', async () => {
+  const { createApp } = require('../lib/routes');
+  const s = setup('09:00'), app = createApp(s.eng, { MASTER_KEY: 'master-secret-1' });
+  const bad = () => app({ method: 'GET', path: '/api/owner/me', authKey: 'wrong-key-123456', ip: '9.9.9.9' });
+  for (let i = 0; i < 31; i++) assert.equal((await bad()).status, 401);
+  assert.equal((await bad()).status, 429);
+  assert.equal((await app({ method: 'GET', path: '/api/owner/me', authKey: 'test-owner-key-1', ip: '8.8.8.8' })).status, 200, 'other addresses are unaffected');
+});
